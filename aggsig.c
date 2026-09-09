@@ -216,7 +216,13 @@ int main(void) {
     ort_statement_free(st);
     return 1;
   }
-  if(falcon_prime->p * sqrt(st->normsq[3]) * JL_INF_SLACK * sqrt(pp->pp_ort->m) > PS_Q/2){
+  
+  if(sqrt(st->normsq[0]) 
+     + (falcon_prime->p / 2.0) * sqrt(512) * sqrt(st->normsq[0])
+     + falcon_prime->p * sqrt(st->normsq[3]) * JL_INF_SLACK * sqrt(pp->pp_ort->m)
+     + falcon_prime->p / 2.0
+     > PS_Q
+    ){
     fprintf(stderr, "ERROR: Unsound parameters, the falcon equation is  not "
                     "guaranteed to hold over the falcon modulus\n");
     polxvec_free(t);
