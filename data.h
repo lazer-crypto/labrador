@@ -22,7 +22,7 @@
 #elif N == 256
 #define TAU1 22
 #define TAU2 0
-#define T 10 // FIXME
+#define T 9.5
 #else
 #error
 #endif
