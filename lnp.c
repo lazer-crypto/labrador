@@ -1655,7 +1655,7 @@ int lnp_params_gen (lnp_params outpp, size_t *pibits, size_t *owtbits, const sta
     if (!(2 * (2 * sdp * sqrtl(512/26)) * (2 * sdp * sqrtl(512/26)) < Q))
         goto ret;
     for (i = 0; i < LNP_NPROJ; i++) {
-        if (!((1ULL << k[i]) * 91 / 0.74 < Q))
+        if (!((1ULL << k[i]) * JL_INF_QDIV / JL_INF_DEN < Q))
             goto ret;
     }
 

@@ -16,11 +16,13 @@
 
 // if norm_l2(s) < b, then w.h.p. norm_inf(proj(s)) < 9.75 * b
 #define JL_INF_MULT 9.75
-// if norm_inf(proj(s)) > 9.75 * b, then w.h.p. norm_l2(s) > (9.75/0.74) * b
-#define JL_INF_SLACK (JL_INF_MULT/0.74)
-// need JL_INF_SLACK * b < PS_Q / 91 to apply JL
+#define JL_INF_DEN 0.49
+// if norm_inf(proj(s)) > 9.75 * b, then w.h.p. norm_l2(s) > (9.75/0.49) * b
+#define JL_INF_SLACK (JL_INF_MULT/JL_INF_DEN)
+#define JL_INF_QDIV 61
+// need JL_INF_SLACK * b < PS_Q / 61 to apply JL
 // need the coefs of proj(s) to be in 32 bits, so (9.75 * b) in 31 bits
-#define JL_INF_MAXNORM MIN(PS_Q / (91.0 * JL_INF_SLACK), (1ULL<<31)/JL_INF_MULT)
+#define JL_INF_MAXNORM MIN(PS_Q / (JL_INF_QDIV * JL_INF_SLACK), (1ULL<<31)/JL_INF_MULT)
 
 // if norm_l2(s) < b, then w.h.p. norm_l2(proj(s)) < sqrt(337) * b
 #define JL_L2_MULT 337
