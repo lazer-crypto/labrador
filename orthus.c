@@ -264,7 +264,7 @@ static int ort_params_gen_raw(
 )
 {
   size_t i, j, len_bin;
-  double normsq, normsq_global, normsq_unif, std, norm_checked, bound_kappa;
+  double normsq, normsq_global, std, norm_checked, bound_kappa;
   double var_zcol, std_zcol1, normsq_max_proj;
   int found, secure;
 
@@ -368,9 +368,8 @@ static int ort_params_gen_raw(
     return 1;
   }
 
-  pp->owt_normsq[0] = 1.3 * pp->r * pp->nvt * N * (ONE << (2*pp->base_zcol))/12;
-  pp->owt_normsq[1] = 1.3 * (normsq_global * PS_TAU * PS_TAU) 
-                      / (ONE << (2*pp->base_zcol));
+  pp->owt_normsq[0] = normsq_u(pp->r * pp->nvt * N, pp->base_zcol);
+  pp->owt_normsq[1] = normsq_g(pp->r * pp->nvt * N, pp->base_zcol, sqrtl(var_zcol));
   pp->owt_parts = 2;
   pp->owt_idx_zcol = 0;
   pp->len_zcol = 2 * pp->r * pp->nvt;
@@ -417,17 +416,15 @@ static int ort_params_gen_raw(
 
   // lengths, idx and norms for output witness (except binary)
 
-  normsq_unif = 1.3 * N * (ONE <<(2*pp->base_unif))/12;
-
   pp->owt_idx_incom = pp->owt_parts++;
   pp->len_incom = pp->m * pp->n * pp->kappa_inner * pp->digits_unif;
   pp->len_outcom = 7 * pp->digits_unif;
-  pp->owt_normsq[pp->owt_idx_incom] = (pp->len_incom+pp->len_outcom)*normsq_unif;
+  pp->owt_normsq[pp->owt_idx_incom] = normsq_u((pp->len_incom+pp->len_outcom)*N, pp->base_unif);
 
   if(pp->nvpre > 0){
     pp->owt_idx_incom_pre = pp->owt_parts++;
     pp->len_incom_pre = pp->nvpre * pp->r * pp->kappa_inner_pre * pp->digits_unif;
-    pp->owt_normsq[pp->owt_idx_incom_pre] = pp->len_incom_pre * normsq_unif;
+    pp->owt_normsq[pp->owt_idx_incom_pre] = normsq_u(pp->len_incom_pre * N, pp->base_unif);
   }
   else{
     pp->owt_idx_incom_pre = 0;
@@ -436,36 +433,35 @@ static int ort_params_gen_raw(
 
   pp->owt_idx_quadg = pp->owt_parts++;
   pp->len_quadg = pp->r * pp->digits_quadg * (pp->nvt * pp->nvt + pp->nvt) / 2;
-  pp->owt_normsq[pp->owt_idx_quadg] = pp->len_quadg;
-  pp->owt_normsq[pp->owt_idx_quadg] *= 1.3 * N * (ONE << 2*pp->base_quadg)/12;
+  pp->owt_normsq[pp->owt_idx_quadg] = normsq_u(pp->len_quadg * N, pp->base_quadg);
 
   pp->owt_idx_liftings = pp->owt_parts++;
   pp->len_liftings = pp->r * LIFTS * pp->digits_unif;
-  pp->owt_normsq[pp->owt_idx_liftings] = pp->len_liftings * normsq_unif;
+  pp->owt_normsq[pp->owt_idx_liftings] = normsq_u(pp->len_liftings * N, pp->base_unif);
 
   pp->owt_idx_ling = pp->owt_parts++;
   pp->len_ling = pp->r * pp->digits_unif * (pp->nvt * pp->nvt + pp->nvt) / 2;
-  pp->owt_normsq[pp->owt_idx_ling] = pp->len_ling * normsq_unif;
+  pp->owt_normsq[pp->owt_idx_ling] = normsq_u(pp->len_ling * N, pp->base_unif);
 
   pp->owt_idx_nttg = pp->owt_parts++;
   pp->len_nttg = (2 * pp->r - 2) * pp->digits_unif;
-  pp->owt_normsq[pp->owt_idx_nttg] = pp->len_nttg * normsq_unif;
+  pp->owt_normsq[pp->owt_idx_nttg] = normsq_u(pp->len_nttg * N, pp->base_unif);
 
   pp->owt_idx_zrow_minus = pp->owt_parts;
   pp->len_zrow_minus = pp->m * pp->n * pp->digits_unif;
   for(i=0;i<pp->digits_unif;i++){
-    pp->owt_normsq[pp->owt_idx_zrow_minus+i] = pp->m * pp->n * normsq_unif;
+    pp->owt_normsq[pp->owt_idx_zrow_minus+i] = normsq_u(pp->m * pp->n * N, pp->base_unif);
   }
   pp->owt_parts += pp->digits_unif;
 
   pp->owt_idx_zrow_plus = pp->owt_parts++;
   pp->len_zrow_plus = pp->m * pp->n * pp->digits_unif;
-  pp->owt_normsq[pp->owt_idx_zrow_plus] = pp->len_zrow_plus * normsq_unif;
+  pp->owt_normsq[pp->owt_idx_zrow_plus] = normsq_u(pp->len_zrow_plus * N, pp->base_unif);
 
   pp->owt_idx_zrow_plus_alpha = pp->owt_parts;
   pp->len_zrow_plus_alpha = pp->m * pp->n * pp->digits_unif;
   for(i=0;i<pp->digits_unif;i++){
-    pp->owt_normsq[pp->owt_idx_zrow_plus_alpha+i] = pp->m * pp->n * normsq_unif;
+    pp->owt_normsq[pp->owt_idx_zrow_plus_alpha+i] = normsq_u(pp->m * pp->n * N, pp->base_unif);
   }
   pp->owt_parts += pp->digits_unif;
 

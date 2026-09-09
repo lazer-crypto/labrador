@@ -96,7 +96,7 @@ static int lab_params_gen_raw(
 )
 {
   size_t i, j, pos;
-  size_t t_pols, g_pols, h_pols;
+  size_t t_pols, g_pols, h_pols, tgh_pols;
   double normsq_max, var_z, var_g, std_z1, slack_protocol;
   double bound_kappa[2];
   double norm_checked_z, norm_checked_z0, norm_checked_z1, norm_checked_tgh;
@@ -138,14 +138,14 @@ static int lab_params_gen_raw(
     pp->bz = round((log2(12)+log2(var_z))/4);
     pp->bz = MAX(1, pp->bz);
 
-    pp->normsq_new[0] = 1.3 * pp->nmax * N * (1ULL<<(2*pp->bz)) / 12;
-    pp->normsq_new[1] = 1.4*(pp->normsq_global*PS_TAU*PS_TAU)/(1ULL<<(2*pp->bz));
+    pp->normsq_new[0] = 1.03 * normsq_u(pp->nmax * N, pp->bz);
+    pp->normsq_new[1] = normsq_g(pp->nmax * N, pp->bz, sqrtl(var_z));
   }
   else{
     pp->fz = 1;
     pp->bz = round((log2(12)+log2(var_z))/2);
 
-    pp->normsq_new[0] = 1.3 * pp->normsq_global * PS_TAU * PS_TAU;
+    pp->normsq_new[0] = tail_factor(pp->nmax * N) * pp->normsq_global * PS_TAU * PS_TAU;
   }
 
   // Uniform decomposition
@@ -190,13 +190,14 @@ static int lab_params_gen_raw(
       norm_checked_z0 = pp->normsq_new[0] + (pp->fz - 1) * pp->normsq_new[1];
 
       if(!pp->tail){
+        tgh_pols = t_pols + g_pols + h_pols + (pp->compressed ? 4 * pp->fu : 0);
         pp->normsq_new[pp->fz] = (1ULL<<(2*pp->bu)) * t_pols;
         pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bg)) * g_pols;
         pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bu)) * h_pols;
         if(pp->compressed){ // outer commitments
           pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bu)) * 4 * pp->fu;
         }
-        pp->normsq_new[pp->fz] *= 1.3 * N/12.0;
+        pp->normsq_new[pp->fz] *= tail_factor_u(tgh_pols * N) * N / 12.0;
 
         norm_checked_z0 += pp->normsq_new[pp->fz];
       }
@@ -242,13 +243,14 @@ static int lab_params_gen_raw(
       norm_checked_tgh = norm_checked_z0;
     }
     else{
+      tgh_pols = t_pols + g_pols + h_pols + (pp->compressed ? 4 * pp->fu : 0);
       pp->normsq_new[pp->fz] = (1ULL<<(2*pp->bu)) * t_pols;
       pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bg)) * g_pols;
       pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bu)) * h_pols;
       if(pp->compressed){ // outer commitments
         pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bu)) * 4 * pp->fu;
       }
-      pp->normsq_new[pp->fz] *= 1.1 * N/12.0;
+      pp->normsq_new[pp->fz] *= tail_factor_u(tgh_pols * N) * N / 12.0;
 
       norm_checked_tgh = sqrt(pp->normsq_new[pp->fz]) * slack_norm_check;
     }

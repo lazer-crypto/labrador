@@ -176,8 +176,6 @@ static void lnp_addcheck_sopening(comcnst cnst, const lnp_params pp, polx chalx)
 // v-opening: z1v is contiguous at Z1V10..Z1V20, z2v (= rv) within Z1LO/Z1HI.
 static void lnp_addcheck_vopening(comcnst cnst, const lnp_params pp, polx chalx);
 static void __print_bytes(uint8_t *bytes, size_t len);
-static uint64_t normsq_u (size_t dim, size_t log2b);
-static uint64_t normsq_g (size_t dim, size_t log2b, long double sd);
 static void ist_shift_positions(const statement ist, const lnp_params pp, int dir);
 
 static void __print_bytes(uint8_t *bytes, size_t len) {
@@ -190,14 +188,6 @@ static void __print_bytes(uint8_t *bytes, size_t len) {
         if ((i + 1) % 8 == 0 || (size_t)i == len)
             printf("\n");
     }
-}
-
-static uint64_t normsq_u (size_t dim, size_t log2b) {
-    return 1.3 * dim * (1ULL << (2 * log2b)) / 12;
-}
-
-static uint64_t normsq_g (size_t dim, size_t log2b, long double sd) {
-    return 1.3 * dim * sd * sd / (1ULL << (2 * log2b));
 }
 
 // translate ist constraint positions between the input-witness layout

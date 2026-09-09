@@ -276,7 +276,7 @@ int dch_params_gen(
   uint64_t normsq, normsq_max;
   polz quadcoefz;
   int secure;
-  double bound_sis, var_unif, var_liftings, std, normsq_ensured, var, var_max;
+  double bound_sis, std, normsq_ensured, var, var_max;
   double *var_quad, base_power, quadcoef_sq;
   statement st_lab;
   lab_params pp_lab;
@@ -552,7 +552,6 @@ int dch_params_gen(
     pp->digits_unif++;
     pp->base_unif = (LOGQ + pp->digits_unif - 1) / pp->digits_unif;
   }
-  var_unif = 1.2 * (1ULL<<(2*pp->base_unif)) / 12.0;
 
   if(pp->nexact > 0){
     pp->base_liftings = pp->base_unif;
@@ -560,10 +559,9 @@ int dch_params_gen(
     pp->digits_liftings = ceil((log2(12) + 2*log2(normsq_max))
                                 / (2*pp->base_liftings));
     pp->digits_liftings = MAX(1, pp->digits_liftings);
-    var_liftings = 1.2 * (1ULL<<(2*pp->base_liftings)) / 12.0;
   }
   else{
-    pp->base_liftings = pp->digits_liftings = var_liftings = 0;
+    pp->base_liftings = pp->digits_liftings = 0;
   }
 
   // Rank commitment liftings
@@ -576,7 +574,7 @@ int dch_params_gen(
       pp->incom_offw[pp->nincom] = off;
       pp->incom_lenw[pp->nincom] = len;
       pp->kappa_inner[pp->nincom] = 0;
-      normsq = len * N * var_liftings;
+      normsq = normsq_u(len * N, pp->base_liftings);
       bound_sis = 2 * sqrt(normsq) * JL_INF_SLACK;
       secure = 0;
       while(!secure && pp->kappa_inner[pp->nincom] < 2048/N){
@@ -638,7 +636,7 @@ int dch_params_gen(
     }
     pp->len_com_inner *= pp->digits_unif;
 
-    normsq = pp->len_com_inner  * N * var_unif;
+    normsq = normsq_u(pp->len_com_inner  * N,  pp->base_unif);
     bound_sis = 2 * sqrt(normsq) * JL_INF_SLACK;
     secure = 0;
     while(!secure && pp->kappa_middle < 2048/N){
@@ -765,7 +763,7 @@ int dch_params_gen(
 
     // liftings
     parts[nparts].len = pp->nexact * pp->digits_liftings;
-    parts[nparts].normsq = parts[nparts].len *  N * var_liftings;
+    parts[nparts].normsq = normsq_u(parts[nparts].len *  N, pp->base_liftings);
     parts[nparts].normty = L2APPROX;
     chunks[nchunks].idx_part = nparts;
     chunks[nchunks].len = parts[nparts].len;
@@ -825,7 +823,7 @@ int dch_params_gen(
 
     // inner commitments
     parts[nparts].len = pp->len_com_inner;
-    parts[nparts].normsq = parts[nparts].len * N * var_unif;
+    parts[nparts].normsq = normsq_u(parts[nparts].len * N, pp->base_unif);
     parts[nparts].normty = L2APPROX;
     chunks[nchunks].idx_part = nparts;
     chunks[nchunks].len = parts[nparts].len;
@@ -883,7 +881,6 @@ int dch_params_gen(
     }
 
     base_power = ONE << (2*(pp->digits_quad_left-1)*pp->base_quad_left);
-    var = (ONE << (2*pp->base_quad_left))/12;
     off = 0;
     for(i=0;i<st->rqcnst->nsparse;i++){
       len = st->rqcnst->sparse[i]->quad->len;
@@ -897,14 +894,14 @@ int dch_params_gen(
         for(k=0;k<pp->digits_quad_left-1;k++){
           idx_part = nparts + k * pp->quad_nterms;
           parts[idx_part].len = st->n[quad1];
-          parts[idx_part].normsq = 1.3 * var * st->n[quad1] * N;
+          parts[idx_part].normsq = normsq_u(st->n[quad1] * N, pp->base_quad_left);
           parts[idx_part].normty = L2APPROX;
         }
 
         // most significant digit of quad_left
         idx_part = nparts + (pp->digits_quad_left-1) * pp->quad_nterms;
         parts[idx_part].len = st->n[quad1];
-        parts[idx_part].normsq = 1.3 * var_quad[off] * st->n[quad1] * N / base_power;
+        parts[idx_part].normsq = tail_factor(st->n[quad1] * N) * var_quad[off] * st->n[quad1] * N / base_power;
         parts[idx_part].normty = L2APPROX;
 
         // quad_right

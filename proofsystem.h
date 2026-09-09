@@ -106,4 +106,19 @@ void ps_addcheck_lift_zero_coeff(sparsecnst c[LIFTS], size_t liftpos);
 
 void compile_bincnst(statement st, witness wt);
 
+// Tail factor for a GAUSSIAN vector targeting 40 bits of completeness (Laurent-Massart chi^2 bound).
+// Returns 1 + 2*sqrt(t/dim) + 2*t/dim  where t = 40*ln(2).
+double tail_factor(size_t dim);
+
+// Tail factor for a UNIFORM[-B/2,B/2)^dim vector targeting 40 bits of completeness (Hoeffding bound).
+// Returns 1 + sqrt(4.5*t/dim)  where t = 40*ln(2).
+double tail_factor_u(size_t dim);
+
+// Squared-norm bound for a uniform vector of dimension dim with log2-base log2b.
+uint64_t normsq_u(size_t dim, size_t log2b);
+
+// Squared-norm bound for a gaussian vector of dimension dim with log2-base log2b
+// and per-coordinate standard deviation sd.
+uint64_t normsq_g(size_t dim, size_t log2b, long double sd);
+
 #endif

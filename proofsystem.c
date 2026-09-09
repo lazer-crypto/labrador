@@ -24,6 +24,27 @@ static int64_t cmodq(int64_t a) {
   return a;
 }
 
+double tail_factor(size_t dim) {
+  if (dim == 0) return 1.3;
+  const double t = 40.0 * 0.6931471805599453; // 40 * ln(2) = 27.72589
+  double delta = 2.0 * sqrt(t / (double)dim) + 2.0 * t / (double)dim;
+  return 1.0 + delta;
+}
+
+double tail_factor_u(size_t dim) {
+  if (dim == 0) return 1.3;
+  const double t = 40.0 * 0.6931471805599453; // 40 * ln(2) = 27.72589
+  return 1.0 + sqrt(4.5 * t / (double)dim);
+}
+
+uint64_t normsq_u(size_t dim, size_t log2b) {
+  return tail_factor_u(dim) * dim * (1ULL << (2 * log2b)) / 12;
+}
+
+uint64_t normsq_g(size_t dim, size_t log2b, long double sd) {
+  return tail_factor(dim) * dim * sd * sd / (1ULL << (2 * log2b));
+}
+
 /*
   Initializes statement allocating space for up to maxr vectors
 */
