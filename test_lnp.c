@@ -162,9 +162,8 @@ static void test_ldd_prove_reduce_composite(
       done = 1;
     }
 
-    if (round == 4) { //XXX do lnp when ?
-        printf("lnp_params_gen\n");
-        lnp_params_gen(ppzk, &pibits, &owtbits, *ist);
+    printf("lnp_params_gen\n");
+    if (!lnp_params_gen(ppzk, &pibits, &owtbits, *ist)) {
         print_pp(ppzk, pibits, owtbits);
         printf("lnp_prove\n");
         lnp_prove(pizk, *ostp, *owt, *ist, *iwt, ppzk);
@@ -208,11 +207,11 @@ static void test_ldd_prove_reduce_composite(
         compile_bincnst(*ist, *iwt);
         print_st(*ist);
         if(!verify(*ist, *iwt)){
-            fprintf(stderr,"ERROR in test_ldd_prove_reduce_composite, r=%zu, len=%zu," 
+            fprintf(stderr,"ERROR in test_ldd_prove_reduce_composite, r=%zu, len=%zu,"
                           " ncnst=%zu: the output witness/statement of the binary "
                           "compiler (after lnp) does not verify\n", r, len, ncnst);
-            done = 1;
         }
+        done = 1;
     }
   }
 
