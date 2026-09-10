@@ -1,6 +1,6 @@
 This repository contains code implemented for the papers:
   - Orthus: Practical Sublinear Batch-Verification of Lattice Relations from Standard Assumptions. Madalina Bolboceanu, Jonathan Bootle, Vadim Lyubashevsky, Antonio Merino-Gallardo, and Gregor Seiler. To appear in the proceedings of Crypto 2026. ([eprint](https://eprint.iacr.org/2026/398))
-  - A Toolkit for Succinct Lattice-Based Zero Knowledge Proofs. Beatrice Biasioli, Madalina Bolboceanu, Vadim Lyubashevsky, Antonio Merino-Gallardo, Michał Osadnik, Gregor Seiler, and Patrick Steuer. (soon on eprint)
+  - A Toolkit for Succinct Lattice-Based Zero Knowledge Proofs. Beatrice Biasioli, Madalina Bolboceanu, Vadim Lyubashevsky, Antonio Merino-Gallardo, Michał Osadnik, Gregor Seiler, and Patrick Steuer. ([eprint](https://eprint.iacr.org/2026/1289))
 
 A core component is a re-implementation of the [LaBRADOR](https://eprint.iacr.org/2022/1341) proof system with the aim of making it more composable with the newer protocols. It is built on top of the arithmetic from the [original implementation](https://github.com/lattice-dogs/labrador).
 
