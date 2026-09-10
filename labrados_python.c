@@ -101,7 +101,7 @@ int py_append_constraint(
   sparsecnst *cnst;
   double width_unif = ldexp(1, 2*LOGQ);
   __attribute__((aligned(16)))
-  uint8_t hashbuf[deg*N*QBYTES];
+  uint8_t hashbuf[deg*POLZBYTES];
   polz t[deg];
   shake128incctx shakectx;
 
@@ -155,7 +155,7 @@ int py_append_constraint(
   polzvec_topolxvec((*cnst)->b, t, 0, 1, deg);
   polxvec_setwidths1((*cnst)->b, 0, 1, deg, width_unif);
   polzvec_bitpack(hashbuf, t, deg);
-  shake128_inc_absorb(&shakectx, hashbuf, deg*N*QBYTES);
+  shake128_inc_absorb(&shakectx, hashbuf, deg*POLZBYTES);
   
   for(i=0;i<nvec;i++){
     j = idx[i];
@@ -165,7 +165,7 @@ int py_append_constraint(
       polzvec_fromint64vec(t, 1, deg, phi);
       polzvec_topolxvec((*cnst)->lin->phi[i], t, deg*k, 1, deg);
       polzvec_bitpack(hashbuf, t, deg);
-      shake128_inc_absorb(&shakectx, hashbuf, deg*N*QBYTES);
+      shake128_inc_absorb(&shakectx, hashbuf, deg*POLZBYTES);
       phi += deg*N;
     }
     polxvec_setwidths1((*cnst)->lin->phi[i], 0, 1, st->n[j], width_unif);
