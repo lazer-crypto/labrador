@@ -930,7 +930,7 @@ int dch_params_gen(
     }
   }
   *owtbits += pp->len_bin_total * N; // sigmam1 of binary
-  *pibits = (pp->nexact > 0) ? pp->kappa_outer * N * LOGQ : 0;
+  *pibits = (pp->nexact > 0 || pp->nquad > 0) ? pp->kappa_outer * N * LOGQ : 0;
 
   statement_init(st_lab, 0, DCH_MAXPARTS);
 
