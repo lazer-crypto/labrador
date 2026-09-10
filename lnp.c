@@ -334,7 +334,7 @@ void lnp_prove(lnp_proof pi, statement ost, witness owt, const statement ist, co
     poly umaskhat[LOGQ * 256 / N * LNP_NPROJ];
     polx cx;
     uint64_t nonce;
-    uint64_t coeffs[KAPPA_MLWE];
+    int64_t rbits[KAPPA_MLWE * N];   // one random bit per coefficient of rs / rv
     uint8_t seed[16];
     uint8_t *jlmat1, *jlmat2;
     uint8_t *jlmat3, *jlmat4;
@@ -494,16 +494,13 @@ rej_loop1:
         umhat_off += pp->k[i] * 256 / N;
     }
 
-    // rs: binary mlwe secret, internal randomness 2
-    randombytes ((uint8_t *)coeffs, sizeof(coeffs[0]) * pp->rslen);
-    for (i = 0; i < pp->rslen; i++) {
-        poly_binary_fromuint64(r[i], coeffs[i]);
-        //printf("r[%lu]\n", i);
-        //poly_print(r[i]);
+    // rs: uniform binary mlwe secret in R_2^rslen (256 random bits per
+    // polynomial, as in labradoodle.c), internal randomness 2
+    randombits64 (rbits, pp->rslen * N);
+    polyvec_fromint64vec (r, rbits, 1, pp->rslen, 1, NULL);
 #if RANDZERO == 1
-        poly_setzero (r[i]);
+    polyvec_setzero (r, 1, pp->rslen);
 #endif
-    }
     assert (polyvec_isbinary(r, 1, pp->rslen));
 
     // commit ts = A1s*stilde + A2s*rs
@@ -610,17 +607,13 @@ rej_loop1:
     // vtilde = (w,t,simgmam1(w),sigmam1(t))
     polyvec_sigmam1 (vtilde + 2 * LNP_NPROJ * 256 / N, vtilde, 1, 1, 2 * LNP_NPROJ * 256 / N);
 
-    // rv: binary mlwe secret, internal randomness 3
-    
-    randombytes ((uint8_t *)coeffs, sizeof(coeffs[0]) * pp->rvlen);
-    for (i = 0; i < pp->rvlen; i++) {
-        poly_binary_fromuint64(r[i], coeffs[i]);
-        //printf("r[%lu]\n", i);
-        //poly_print(r[i]);
+    // rv: uniform binary mlwe secret in R_2^rvlen (256 random bits per
+    // polynomial), internal randomness 3
+    randombits64 (rbits, pp->rvlen * N);
+    polyvec_fromint64vec (r, rbits, 1, pp->rvlen, 1, NULL);
 #if RANDZERO == 1
-        poly_setzero (r[i]);
+    polyvec_setzero (r, 1, pp->rvlen);
 #endif
-    }
     assert (polyvec_isbinary (r, 1, pp->rvlen));
 
     // commit tv = A1v*vtilde + A2v*rv
