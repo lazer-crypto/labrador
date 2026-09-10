@@ -418,7 +418,7 @@ static int ort_params_gen_raw(
 
   pp->owt_idx_incom = pp->owt_parts++;
   pp->len_incom = pp->m * pp->n * pp->kappa_inner * pp->digits_unif;
-  pp->len_outcom = 7 * pp->digits_unif;
+  pp->len_outcom = 6 * pp->digits_unif;
   pp->owt_normsq[pp->owt_idx_incom] = normsq_u((pp->len_incom+pp->len_outcom)*N, pp->base_unif);
 
   if(pp->nvpre > 0){
@@ -540,7 +540,7 @@ static int ort_params_gen_raw(
 
   // Proof size
 
-  *pibits = 7 * pp->kappa_outer * 32 * LOGQ;
+  *pibits = (6 * SIS1_NCOEF + N) * pp->kappa_outer * LOGQ;
 
   // Output witness size
 
@@ -1207,24 +1207,25 @@ static void commit_outer(
   poly *sout,
   const ort_params pp,
   size_t idx_midcom,
-  size_t idx_rand
+  size_t idx_rand,
+  size_t idx_outcom
 )
 {
   polxvec outcomx, midcom_dec;
 
   polxvec_init(outcomx, pp->kappa_outer, 1);
   polxvec_init(midcom_dec,pp->len_middlecom[idx_midcom]+pp->len_rand[idx_rand],1);
-  polxvec_frompolyvec(midcom_dec, &sout[pp->off_middlecom[idx_midcom]], 1, 
+  polxvec_frompolyvec(midcom_dec, &sout[pp->off_middlecom[idx_midcom]], 1,
                       pp->len_middlecom[idx_midcom], 1);
   if(pp->len_rand[idx_rand] > 0){
-    polxvec_init_subvec(midcom_dec, midcom_dec, pp->len_middlecom[idx_midcom], 1, 
+    polxvec_init_subvec(midcom_dec, midcom_dec, pp->len_middlecom[idx_midcom], 1,
                       pp->len_rand[idx_rand]);
     polxvec_frompolyvec(midcom_dec, &sout[pp->off_rand[idx_rand]], 1,
                         pp->len_rand[idx_rand], 0.5);
     polxvec_init_subvec(midcom_dec, midcom_dec, 0, 1, 0);
   }
   commit(outcomx, midcom_dec);
-  polxvec_decompose(&sout[pp->off_outcom+idx_rand*pp->digits_unif], outcomx, 1,
+  polxvec_decompose(&sout[pp->off_outcom+idx_outcom*pp->digits_unif], outcomx, 1,
                     pp->digits_unif, pp->base_unif);
   polzvec_frompolxvec(outcomz, outcomx, 0, 1, pp->kappa_outer);
   outcom_clear(*outcomz);
@@ -1815,16 +1816,15 @@ static void ort_addcheck_commit(
                            pp->off_middlecom[2],
                            pp->len_middlecom[2] + pp->len_rand[1], pp->base_unif,
                            pp->digits_unif);
-  ps_addcheck_commit_outer(c[2], pp->off_outcom + 2*pp->digits_unif,
-                           pp->off_proj[0], pp->len_proj_total + pp->len_rand[2],
-                          pp->base_unif, pp->digits_unif);
+  ps_addcheck_commit_in_clear(c[2], pi->m[2], pp->kappa_outer,
+                              pp->off_proj[0], pp->len_proj_total + pp->len_rand[2]);
 
   for(i=3;i<7;i++){
-    ps_addcheck_commit_outer(c[i], pp->off_outcom + i*pp->digits_unif,
-                             pp->off_middlecom[i], 
+    ps_addcheck_commit_outer(c[i], pp->off_outcom + (i-1)*pp->digits_unif,
+                             pp->off_middlecom[i],
                              pp->len_middlecom[i] + pp->len_rand[i],
                              pp->base_unif, pp->digits_unif);
-  }              
+  }
   ps_addcheck_commit_middle(c[7], pp->kappa_middle[1], pp->off_middlecom[1],
                             pp->off_incom, pp->len_incom);
   ps_addcheck_commit_middle(c[8], pp->kappa_middle[2], pp->off_middlecom[2],
@@ -1845,9 +1845,15 @@ static void ort_addcheck_commit(
                               pp->off_incom_pre, pp->len_incom_pre);
   }
 
-  for(i=0;i<7;i++){
-    ps_addcheck_commit_coeffs(&czq[i*SIS1_NCOEF], *pi->m[i], 
-                              pp->off_outcom + i*pp->digits_unif,
+  ps_addcheck_commit_coeffs(&czq[0*SIS1_NCOEF], *pi->m[0],
+                            pp->off_outcom + 0*pp->digits_unif,
+                            pp->base_unif, pp->digits_unif);
+  ps_addcheck_commit_coeffs(&czq[1*SIS1_NCOEF], *pi->m[1],
+                            pp->off_outcom + 1*pp->digits_unif,
+                            pp->base_unif, pp->digits_unif);
+  for(i=3;i<7;i++){
+    ps_addcheck_commit_coeffs(&czq[(i-1)*SIS1_NCOEF], *pi->m[i],
+                              pp->off_outcom + (i-1)*pp->digits_unif,
                               pp->base_unif, pp->digits_unif);
   }
 }
@@ -2245,8 +2251,8 @@ static void ort_addchecks(
   ncom = (pp->nvpre > 0) ? 16 : 14;
 
   rqcnstset_init(ost->rqcnst, 4 + pp->m*pp->n + pp->r, ncom);
-  zqcnstset_init(ost->zqcnst, pp->r*LIFTS + 7*SIS1_NCOEF, 
-                 pp->r*LIFTS + 7*SIS1_NCOEF + 1, 0, 1, 0);
+  zqcnstset_init(ost->zqcnst, pp->r*LIFTS + 6*SIS1_NCOEF,
+                 pp->r*LIFTS + 6*SIS1_NCOEF + 1, 0, 1, 0);
 
   ost->zqcnst->sparse_nchal = ost->zqcnst->nsparse;
   ost->rqcnst->sparse_nchal = ost->rqcnst->nsparse;
@@ -2547,7 +2553,7 @@ void ort_prove(
 
   // Outer commitment 1
 
-  commit_outer(pi->m[0], sout, pp, 1, 0);
+  commit_outer(pi->m[0], sout, pp, 1, 0, 0);
 
   update_hash_polz(ost->h, pi->m[0], pp->kappa_outer);
 
@@ -2596,7 +2602,7 @@ void ort_prove(
 
   // Outer commitment 2
 
-  commit_outer(pi->m[1], sout, pp, 2, 1);
+  commit_outer(pi->m[1], sout, pp, 2, 1, 1);
 
   update_hash_polz(ost->h, pi->m[1], pp->kappa_outer);
 
@@ -2673,10 +2679,7 @@ void ort_prove(
     polxvec_init_subvec(projx, projx, 0, 1, 0);
   }
   commit(outcomx, projx);
-  polxvec_decompose(&sout[pp->off_outcom+2*pp->digits_unif], outcomx, 1,
-                    pp->digits_unif, pp->base_unif);
   polzvec_frompolxvec(pi->m[2], outcomx, 0, 1, pp->kappa_outer);
-  outcom_clear(*pi->m[2]);
 
   polxvec_free(projx);
   polxvec_free(outcomx);
@@ -2726,7 +2729,7 @@ void ort_prove(
 
   // Outer commitment 4
 
-  commit_outer(pi->m[3], sout, pp, 3, 3);
+  commit_outer(pi->m[3], sout, pp, 3, 3, 2);
 
   update_hash_polz(ost->h, pi->m[3], pp->kappa_outer);
 
@@ -2765,7 +2768,7 @@ void ort_prove(
     
   // Outer commitment 5
 
-  commit_outer(pi->m[4], sout, pp, 4, 4);
+  commit_outer(pi->m[4], sout, pp, 4, 4, 3);
 
   update_hash_polz(ost->h, pi->m[4], pp->kappa_outer);
 
@@ -2860,7 +2863,7 @@ void ort_prove(
 
   // Outer commitment 6
 
-  commit_outer(pi->m[5], sout, pp, 5, 5);
+  commit_outer(pi->m[5], sout, pp, 5, 5, 4);
 
   update_hash_polz(ost->h, pi->m[5], pp->kappa_outer);
 
@@ -2922,7 +2925,7 @@ void ort_prove(
   
   // Outer commitment 7
 
-  commit_outer(pi->m[6], sout, pp, 6, 6);
+  commit_outer(pi->m[6], sout, pp, 6, 6, 5);
 
   update_hash_polz(ost->h, pi->m[6], pp->kappa_outer);
 

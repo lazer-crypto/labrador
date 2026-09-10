@@ -291,31 +291,31 @@ static void ldd_ling(
 
 static void ldd_addcheck_commit(
   comcnst c[6],
-  sparsecnst czq[4*SIS1_NCOEF], 
+  sparsecnst czq[3*SIS1_NCOEF],
   const lab_params pp,
   const lab_proof pi
 )
 {
-  size_t i;
-
   ps_addcheck_commit_outer(c[0], pp->off[LAB_OUTCOM], pp->off[LAB_U1],
                            pp->len[LAB_U1] + pp->len[LAB_RAND1], pp->bu, pp->fu);
-  ps_addcheck_commit_outer(c[1], pp->off[LAB_OUTCOM]+pp->fu, pp->off[LAB_PROJ],
-                           pp->len[LAB_PROJ]+pp->len[LAB_RAND2], pp->bu, pp->fu);
-  ps_addcheck_commit_outer(c[2], pp->off[LAB_OUTCOM]+2*pp->fu, pp->off[LAB_LIFT],
+  ps_addcheck_commit_in_clear(c[1], pi->m[1], pp->kappa[2], pp->off[LAB_PROJ],
+                              pp->len[LAB_PROJ] + pp->len[LAB_RAND2]);
+  ps_addcheck_commit_outer(c[2], pp->off[LAB_OUTCOM]+pp->fu, pp->off[LAB_LIFT],
                            pp->len[LAB_LIFT]+pp->len[LAB_RAND3], pp->bu, pp->fu);
-  ps_addcheck_commit_outer(c[3], pp->off[LAB_OUTCOM]+3*pp->fu, pp->off[LAB_U2],
+  ps_addcheck_commit_outer(c[3], pp->off[LAB_OUTCOM]+2*pp->fu, pp->off[LAB_U2],
                            pp->len[LAB_U2]+pp->len[LAB_RAND4], pp->bu, pp->fu);
 
-  ps_addcheck_commit_middle(c[4], pp->kappa[1], pp->off[LAB_U1], 
+  ps_addcheck_commit_middle(c[4], pp->kappa[1], pp->off[LAB_U1],
                     pp->off[LAB_INCOM], pp->len[LAB_INCOM]+pp->len[LAB_QUADG]);
   ps_addcheck_commit_middle(c[5], pp->kappa[1], pp->off[LAB_U2],
                             pp->off[LAB_LING], pp->len[LAB_LING]);
 
-  for(i=0;i<4;i++){
-    ps_addcheck_commit_coeffs(&czq[i*SIS1_NCOEF], *pi->m[i], 
-                              pp->off[LAB_OUTCOM] + i*pp->fu, pp->bu, pp->fu);
-  }
+  ps_addcheck_commit_coeffs(&czq[0*SIS1_NCOEF], *pi->m[0],
+                            pp->off[LAB_OUTCOM] + 0*pp->fu, pp->bu, pp->fu);
+  ps_addcheck_commit_coeffs(&czq[1*SIS1_NCOEF], *pi->m[2],
+                            pp->off[LAB_OUTCOM] + 1*pp->fu, pp->bu, pp->fu);
+  ps_addcheck_commit_coeffs(&czq[2*SIS1_NCOEF], *pi->m[3],
+                            pp->off[LAB_OUTCOM] + 2*pp->fu, pp->bu, pp->fu);
 }
 
 static void ldd_addcheck_ling(
@@ -508,11 +508,11 @@ static void ldd_addchecks(
 )
 {
   rqcnstset_init(ost->rqcnst, 3, 7);
-  zqcnstset_init(ost->zqcnst, LIFTS+4*SIS1_NCOEF, LIFTS+4*SIS1_NCOEF + 1, 0, 1, 0);
+  zqcnstset_init(ost->zqcnst, LIFTS+3*SIS1_NCOEF, LIFTS+3*SIS1_NCOEF + 1, 0, 1, 0);
 
   ost->rqcnst->sparse_nchal = 3;
   ost->rqcnst->com_nchal = pp->kappa[0] + 2*pp->kappa[1] + 4*pp->kappa[2];
-  ost->zqcnst->sparse_nchal = LIFTS + 4*SIS1_NCOEF;
+  ost->zqcnst->sparse_nchal = LIFTS + 3*SIS1_NCOEF;
 
   ps_addcheck_lift_zero_coeff(ost->zqcnst->sparse, pp->off[LAB_LIFT]);
 
@@ -712,9 +712,7 @@ void ldd_prove(
     polxvec_init_subvec(projd, projd, 0, 1, 0);
   }
   commit(Up, projd);
-  polxvec_decompose(&sout[pp->off[LAB_OUTCOM]+pp->fu], Up, 1, pp->fu, pp->bu);
   polzvec_frompolxvec(pi->m[1], Up, 0, 1, pp->kappa[2]);
-  outcom_clear(*pi->m[1]);
 
   update_hash_polz(ost->h, pi->m[1], pp->kappa[2]);
   
@@ -798,7 +796,7 @@ void ldd_prove(
     polxvec_init_subvec(liftd, liftd, 0, 1, 0);
   }
   commit(Ub, liftd);
-  polxvec_decompose(&sout[pp->off[LAB_OUTCOM]+2*pp->fu], Ub, 1, pp->fu, pp->bu);
+  polxvec_decompose(&sout[pp->off[LAB_OUTCOM]+pp->fu], Ub, 1, pp->fu, pp->bu);
   polzvec_frompolxvec(pi->m[2], Ub, 0, 1, pp->kappa[2]);
   outcom_clear(*pi->m[2]);
 
@@ -850,7 +848,7 @@ void ldd_prove(
     polxvec_init_subvec(u2d, u2d, 0, 1, 0);
   }
   commit(U2, u2d);
-  polxvec_decompose(&sout[pp->off[LAB_OUTCOM]+3*pp->fu], U2, 1, pp->fu, pp->bu);
+  polxvec_decompose(&sout[pp->off[LAB_OUTCOM]+2*pp->fu], U2, 1, pp->fu, pp->bu);
   polzvec_frompolxvec(pi->m[3], U2, 0, 1, pp->kappa[2]);
   outcom_clear(*pi->m[3]);
 

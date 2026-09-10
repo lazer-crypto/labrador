@@ -190,12 +190,12 @@ static int lab_params_gen_raw(
       norm_checked_z0 = pp->normsq_new[0] + (pp->fz - 1) * pp->normsq_new[1];
 
       if(!pp->tail){
-        tgh_pols = t_pols + g_pols + h_pols + (pp->compressed ? 4 * pp->fu : 0);
+        tgh_pols = t_pols + g_pols + h_pols + (pp->compressed ? 3 * pp->fu : 0);
         pp->normsq_new[pp->fz] = (1ULL<<(2*pp->bu)) * t_pols;
         pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bg)) * g_pols;
         pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bu)) * h_pols;
         if(pp->compressed){ // outer commitments
-          pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bu)) * 4 * pp->fu;
+          pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bu)) * 3 * pp->fu;
         }
         pp->normsq_new[pp->fz] *= tail_factor_u(tgh_pols * N) * N / 12.0;
 
@@ -243,12 +243,12 @@ static int lab_params_gen_raw(
       norm_checked_tgh = norm_checked_z0;
     }
     else{
-      tgh_pols = t_pols + g_pols + h_pols + (pp->compressed ? 4 * pp->fu : 0);
+      tgh_pols = t_pols + g_pols + h_pols + (pp->compressed ? 3 * pp->fu : 0);
       pp->normsq_new[pp->fz] = (1ULL<<(2*pp->bu)) * t_pols;
       pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bg)) * g_pols;
       pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bu)) * h_pols;
       if(pp->compressed){ // outer commitments
-        pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bu)) * 4 * pp->fu;
+        pp->normsq_new[pp->fz] += (1ULL<<(2*pp->bu)) * 3 * pp->fu;
       }
       pp->normsq_new[pp->fz] *= tail_factor_u(tgh_pols * N) * N / 12.0;
 
@@ -275,7 +275,7 @@ static int lab_params_gen_raw(
   pp->len[LAB_LING] = h_pols;
 
   if(pp->compressed){
-    pp->len[LAB_OUTCOM] = 4 * pp->fu;
+    pp->len[LAB_OUTCOM] = 3 * pp->fu;
     pp->len[LAB_U1] = pp->kappa[1] * LOGQ;
     pp->len[LAB_RAND1] = pp->randlen;
     pp->len[LAB_PROJ] = 0;
@@ -345,7 +345,7 @@ static int lab_params_gen_raw(
   *pibits = 0;
 
   if(pp->compressed){
-    *pibits += 4 * pp->kappa[2] * SIS1_NCOEF * LOGQ;
+    *pibits += (3 * SIS1_NCOEF + N) * pp->kappa[2] * LOGQ;
   }
   else{
     *pibits += 256 * ceil(log2(JL_INF_MULT*sqrt(pp->normsq_global)) + 1);

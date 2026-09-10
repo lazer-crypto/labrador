@@ -36,7 +36,7 @@
 #define PS_MAXBINLEN PS_Q/(2*N*JL_INF_SLACK*JL_INF_SLACK)
 
 // number of coefficients needed for the hardness of SIS with inf norm 1
-#define SIS1_NCOEF 32
+#define SIS1_NCOEF 64
 
 #define LOGEDIV2 2.05 // log(2*pi*e)/2
 #define WIDTHMOD(b) ((((__uint128_t) 1) << (2*b))/12.0)
