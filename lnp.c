@@ -38,10 +38,6 @@
 // ceil(log2(14*1.55)) + 1 (sign) = 5 + 1 = 6
 #define YHAT_EXTRA_BITS 6
 
-// len s2 in ajtaij commitment
-#if N == 256
-#define KAPPA_MLWE 6
-#endif
 
 static void print_sparsecnst (sparsecnst cnst);
 
@@ -328,13 +324,13 @@ void lnp_prove(lnp_proof pi, statement ost, witness owt, const statement ist, co
     polz pv[256 / N];
     polz g[LIFTS];
     polz umask[LNP_NPROJ][256 / N];
-    poly r[KAPPA_MLWE];
+    poly r[LNP_MAXRAND];
     poly ghat[LOGQ * LIFTS];
     poly yhat[LOGQ * 256 / N];
     poly umaskhat[LOGQ * 256 / N * LNP_NPROJ];
     polx cx;
     uint64_t nonce;
-    int64_t rbits[KAPPA_MLWE * N];   // one random bit per coefficient of rs / rv
+    int64_t rbits[LNP_MAXRAND * N];   // one random bit per coefficient of rs / rv
     uint8_t seed[16];
     uint8_t *jlmat1, *jlmat2;
     uint8_t *jlmat3, *jlmat4;
@@ -1452,7 +1448,8 @@ int lnp_params_gen (lnp_params outpp, size_t *pibits, size_t *owtbits, const sta
     size_t wtlen, xbinlen;
     size_t s6betasq;
     size_t s123_ck, s45_ck; // extension-aligned A1 sub-block lengths
-    int i, ret;
+    size_t need_s, need_v, kappa_mlwe;
+    int i, ret, iter;
 
     ret = 1;
     memset(outpp, 0, sizeof(*outpp));
@@ -1466,10 +1463,12 @@ int lnp_params_gen (lnp_params outpp, size_t *pibits, size_t *owtbits, const sta
     assert(st->normty[3] == BIN);
     assert(st->normty[4] == L2APPROX);
 
-    // rs uniform binary randomness
-    rslen = KAPPA_MLWE;
-    // rv uniform binary randomness
-    rvlen = KAPPA_MLWE;
+    // rs, rv: uniform binary randomness of the hiding inner commitments,
+    // rslen = kappa_l2msis1 + 1 + LNP_MLWE_DIM, rvlen = kappa_l2msis2 + LNP_MLWE_DIM
+    // (see lnp.h). The MSIS ranks depend on the norm of z2 = y2 + c*(rs,rv)
+    // and hence on rslen + rvlen, so the lengths are found by iteration.
+    rslen = 1 + 1 + LNP_MLWE_DIM;
+    rvlen = 1 + LNP_MLWE_DIM;
 
     // s1,..,s5
     for (i = 0; i < 5; i++)
@@ -1516,8 +1515,6 @@ int lnp_params_gen (lnp_params outpp, size_t *pibits, size_t *owtbits, const sta
     // stilde = (s1,..,s6)
     stildelen = slen + silen[5];
 
-    // srs = (stilde,rs)
-    srslen = stildelen + rslen;
 
     v0hatlen = 0;
     for (i = 0; i < LNP_NPROJ; i++) {
@@ -1535,9 +1532,12 @@ int lnp_params_gen (lnp_params outpp, size_t *pibits, size_t *owtbits, const sta
         betassq += st->normsq[i];
     betassq += s6betasq; // s6
     betassq += 2 * LNP_NPROJ * LNP_MAXCARRIES;
+    for (iter = 0; iter < 16; iter++) {
+    gamma1 = 8;
+    gamma2 = 4;
     sd1 = gamma1 * T * sqrtl(betassq);
     _get_params_rejstd (&capm1, &logsd1, &sd1, &gamma1, T * sqrtl(betassq));
-    
+
     // standard deviation for mask y2: z2 = y2 + c*(rs,rv)
     sd2 = gamma2 * T * sqrtl(N * rslen + N * rvlen);
     _get_params_rejsgnleak (&capm2, &logsd2, &sd2, &gamma2, T * sqrtl(N * rslen + N * rvlen));
@@ -1612,6 +1612,23 @@ int lnp_params_gen (lnp_params outpp, size_t *pibits, size_t *owtbits, const sta
             goto ret;
         }
     }
+
+    // randomness lengths for the ranks just found; if they grow, the norm
+    // of z2 grows and the ranks may change, so recompute until stable.
+    need_s = kappa_l2msis1 + 1 + LNP_MLWE_DIM;
+    need_v = kappa_l2msis2 + LNP_MLWE_DIM;
+    if (need_s > LNP_MAXRAND || need_v > LNP_MAXRAND)
+        goto ret;
+    if (need_s <= rslen && need_v <= rvlen)
+        break;
+    rslen = MAX(rslen, need_s);
+    rvlen = MAX(rvlen, need_v);
+    }
+    if (iter >= 16)
+        goto ret;
+    kappa_mlwe = LNP_MLWE_DIM;
+    // srs = (stilde,rs)
+    srslen = stildelen + rslen;
 
     // commitment key offsets
     // A = (A1s,A2s), A = (A1v,A2v)
@@ -1692,7 +1709,7 @@ int lnp_params_gen (lnp_params outpp, size_t *pibits, size_t *owtbits, const sta
     outpp->wtlen = wtlen;
     outpp->xbinlen = xbinlen;
 
-    outpp->kappa_mlwe = KAPPA_MLWE;
+    outpp->kappa_mlwe = kappa_mlwe;
 
     outpp->kappa_linfmsis = kappa_linfmsis;
     outpp->beta_linfmsis = beta_linfmsis;
@@ -2418,6 +2435,8 @@ void lnp_params_print(lnp_params pp) {
   printf("  MSIS linf rank        : %lu\n", pp->kappa_linfmsis);
   printf("  MSIS l2 1 rank        : %lu\n", pp->kappa_l2msis1);
   printf("  MSIS l2 2 rank        : %lu\n", pp->kappa_l2msis2);
+  printf("  rs,rv lengths         : %lu,%lu\n", pp->rslen, pp->rvlen);
+  printf("  MLWE dim (polys)      : %lu\n", pp->kappa_mlwe);
   printf("  A1soff,A2soff         : 0,%lu\n", pp->a2soff);
   printf("  A1voff,A2voff         : 0,%lu\n", pp->a2voff);
     

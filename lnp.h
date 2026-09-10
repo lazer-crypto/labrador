@@ -11,6 +11,21 @@
 // so we only project s1..s4 (not s5)
 #define LNP_NPROJ       4
 #define LNP_MAXCARRIES  32
+// The inner commitments ts = A1*stilde + A2s*rs and tv = A2*vtilde + A2v*rv
+// are hiding under M-LWE in knapsack form: (A2s|phi_rand^T)*rs has
+// kappa_l2msis1 + 1 output polynomials (the garbage term u contains
+// <phi_rand, rs>) and A2v*rv has kappa_l2msis2. Such an instance is LWE of
+// dimension (rslen - (kappa_l2msis1 + 1)) resp. (rvlen - kappa_l2msis2)
+// polynomials with binary error, so the randomness lengths are set to
+//   rslen = kappa_l2msis1 + 1 + LNP_MLWE_DIM,  rvlen = kappa_l2msis2 + LNP_MLWE_DIM.
+// For q = 2^38 - 107 (the modulus used by the toolkit) LNP_MLWE_DIM = 7
+// (1792 coefficients) needs BKZ block size ~394 in the primal (uSVP) attack
+// with binary error, i.e. root Hermite factor < 1.00444 as assumed by
+// sis_secure (6 polynomials give ~318, 8 give ~472). The value is also safe
+// for LOGQ = 32, 36 (smaller q makes the instance harder).
+#define LNP_MLWE_DIM    7
+// upper bound on rslen, rvlen (size of the stack buffers in lnp_prove)
+#define LNP_MAXRAND     32
 
 // witness vectors (s3+s6+z2 merged into Z1LO/Z1HI)
 typedef enum {Z1S10, Z1S20, Z1LO, Z1S40, Z1S50,
@@ -38,8 +53,9 @@ typedef struct _lnp_proof {
 } lnp_proof[1];
 
 typedef struct _lnp_params {
-  // mlwe rank for uniform binary randomness
-  // to make middle commitments ts, tv hiding
+  // M-LWE dimension (in polynomials) of the knapsack instances that make the
+  // inner commitments ts, tv hiding, i.e. rslen - (kappa_l2msis1 + 1) =
+  // rvlen - kappa_l2msis2 = LNP_MLWE_DIM
   size_t kappa_mlwe;
 
   // msis rank for linf <= 2
