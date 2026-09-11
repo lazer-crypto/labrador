@@ -75,7 +75,7 @@ void pack_params_gen(
     }
     else if(iszk){
       global_norm_check = 0;
-      slack_norm_check = 2*JL_INF_SLACK;
+      slack_norm_check = 4*JL_INF_SLACK;
     }
     else{
       global_norm_check = 1;
