@@ -2082,6 +2082,148 @@ static void lnp_addcheck_vopening(comcnst cnst, const lnp_params pp, polx chalx)
   polxvec_free(powers);
 }
 
+// Build the 1 + LNP_NPROJ projection constraints into lnpzq->sparse[1 ..
+// 1 + LNP_NPROJ]: the masked second projection z = Pi_bar*v1 + y and the four
+// first projections Pi_i*s_i + u_i = 2^k_i*(w_i - t_i) + v0_i. Each set of 256
+// coordinate relations is collapsed into one constant-term constraint with a
+// fresh vector of integer challenges derived from h. The function is called
+// once per lift (LIFTS = 4).
+static void lnp_projection_cnsts (
+  zqcnstset lnpzq,
+  const lnp_params pp,
+  const uint8_t *jlmat1,
+  const uint8_t *jlmat2,
+  const uint8_t *jlmat3,
+  const uint8_t *jlmat4,
+  const polz *zp,
+  uint8_t h[16]
+) {
+  size_t i, v0off, umoff, ybits, si_pos_merged;
+  int64_t *chalz;
+  polxvec phip, phiy, phiu, sv, phiv0, zpx, cx, phit, phiw, b;
+
+  // projection of (w,t): c*Pi*(w,t) + c*y = z
+  // y needs to be recomposed from binary yhat
+  chalz = _malloc(256 * sizeof(int64_t));
+  sample_chalz (chalz, 256, h);
+
+  polxvec_init (phip, pp->vtildelen / 2, 1);
+  ybits = pp->logsdp + YHAT_EXTRA_BITS;
+  polxvec_init (phiy, ybits, 1);
+  polxvec_init (zpx, 256 / N, 1);
+  polxvec_init (cx, 256 / N, 1);
+  polxvec_init (b, 256 / N, 1);
+
+  jl_aggregate_mat (phip, jlmat3, jlmat4, chalz); // linear part corresponding to (w,t)
+
+  jl_aggregate_proj (phiy, ybits, chalz); // linear part corresponding to yhat (part of s6)
+  polxvec_init_subvec2 (sv, phiy, ybits - 1, 1, 1); // negate part corresponding to most significant bit (required after jl_aggregate_proj)
+  polxvec_neg (sv, sv);
+  polxvec_neg (phiy, phiy); // because jl_aggregate_proj does -sigmam1()
+  
+  polzvec_topolxvec (zpx, zp, 0, 1, 256 / N);
+  polxvec_fromint64vec2 (cx, chalz, 256 / N, 1, 1); // does this work for N < 256?
+  polxvec_sigmam1 (cx, cx);
+  polxvec_sprod (b, cx, zpx);
+
+  sparsecnst_init (lnpzq->sparse[1], 1);
+
+  linfunc_init (lnpzq->sparse[1]->lin, 1, 2, 2);
+
+  polxvec_init (lnpzq->sparse[1]->lin->phi[0], ybits, 1);
+  lnpzq->sparse[1]->lin->off[0] = pp->off[Z1LO] + pp->silen[2] + LIFTS * LOGQ; // s6 position + len(ghat)
+  polxvec_copy (lnpzq->sparse[1]->lin->phi[0], phiy);
+
+  polxvec_init (lnpzq->sparse[1]->lin->phi[1], pp->vtildelen / 2, 1);
+  lnpzq->sparse[1]->lin->off[1] = pp->off[Z1V10];
+  polxvec_copy (lnpzq->sparse[1]->lin->phi[1], phip);
+
+  polxvec_copy (lnpzq->sparse[1]->b, b);
+
+  sparsecnst_refresh (lnpzq->sparse[1]);
+
+  polxvec_free (b);
+  polxvec_free (zpx);
+  polxvec_free (cx);
+  polxvec_free (phip);
+  polxvec_free (phiy);
+  free (chalz);
+  // projection of si: c*Pi*si + c*ui = c*2^ki*wi - c*2^ki*ti + c*v0i
+  // ui,v0i need to be recomposed from binary yhat
+
+  polxvec_init (phip, pp->silen_max, 1);
+  polxvec_init (phit, 256 / N, 1);
+  polxvec_init (phiw, 256 / N, 1);
+
+  v0off = 0;
+  umoff = 0;
+  for (i = 0; i < LNP_NPROJ; i++) {
+
+  chalz = _malloc(256 * sizeof(int64_t));
+  sample_chalz (chalz, 256, h);
+
+  jl_aggregate_mat (phip, jlmat1, jlmat2, chalz); // linear part corresponding to si
+
+  polxvec_init (phiv0, pp->k[i], 1);
+  jl_aggregate_proj (phiv0, pp->k[i], chalz); // linear part corresponding to v0ihat (part of xbin)
+  polxvec_init_subvec2 (sv, phiv0, pp->k[i] - 1, 1, 1); // negate part corresponding to most significant bit (required after jl_aggregate_proj)
+  polxvec_neg (sv, sv);
+
+  polxvec_init (phiu, pp->k[i], 1);
+  polxvec_copy (phiu, phiv0); // linear part corresponding to ui (part of s6)
+  polxvec_neg (phiu, phiu); // because jl_aggregate_proj does -sigmam1()
+
+  polxvec_fromint64vec2 (phit, chalz, 256 / N, 1, 1);
+  polxvec_refresh (phit);
+  polxvec_sigmam1 (phit, phit); // linear part corresponding to ti
+  polxvec_scale (phit, phit, (int64_t)1 << pp->k[i]);
+  polxvec_refresh (phit);
+  polxvec_neg (phiw, phit); // linear part corresponding to wi
+
+  sparsecnst_init (lnpzq->sparse[2 + i], 1);
+
+  linfunc_init (lnpzq->sparse[2 + i]->lin, 1, 5, 5);
+
+  polxvec_init (lnpzq->sparse[2 + i]->lin->phi[0], pp->k[i], 1);
+  lnpzq->sparse[2 + i]->lin->off[0] = pp->off[Z1LO] + pp->silen[2] + LIFTS * LOGQ + (pp->logsdp + YHAT_EXTRA_BITS) * 256 / N + umoff; // s6 position + len(ghat,yhat,umask[0..i-1])
+  polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[0], phiu);
+
+  polxvec_init (lnpzq->sparse[2 + i]->lin->phi[1], pp->silen[i], 1);
+  // Position of s_i (i=0..3) in merged sxl: Z1S10/Z1S20 for i=0,1; Z1LO for i=2
+  // (s3 is at the start of Z1LO); Z1S40 for i=3 (s4).
+  if (i == 0)      si_pos_merged = pp->off[Z1S10];
+  else if (i == 1) si_pos_merged = pp->off[Z1S20];
+  else if (i == 2) si_pos_merged = pp->off[Z1LO];
+  else             si_pos_merged = pp->off[Z1S40]; // i == 3
+  lnpzq->sparse[2 + i]->lin->off[1] = si_pos_merged;
+  polxvec_init_subvec2 (sv, phip, 0, 1, pp->silen[i]);
+  polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[1], sv);
+
+  polxvec_init (lnpzq->sparse[2 + i]->lin->phi[2], pp->k[i], 1);
+  lnpzq->sparse[2 + i]->lin->off[2] = pp->off[V0HAT] + v0off;
+  polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[2], phiv0);
+
+  polxvec_init (lnpzq->sparse[2 + i]->lin->phi[3], 256 / N, 1);
+  lnpzq->sparse[2 + i]->lin->off[3] = pp->off[Z1V10] + pp->vtildelen / 4 + i; // t[i] within v10
+  polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[3], phit);
+
+  polxvec_init (lnpzq->sparse[2 + i]->lin->phi[4], 256 / N, 1);
+  lnpzq->sparse[2 + i]->lin->off[4] = pp->off[Z1V10] + i; // w[i] within v10
+  polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[4], phiw);
+
+  sparsecnst_refresh (lnpzq->sparse[2 + i]);
+
+  v0off += pp->v0ihatlen[i];
+  umoff += pp->k[i] * 256 / N;
+  polxvec_free (phiu);
+  polxvec_free (phiv0);
+  free (chalz);
+  }
+
+  polxvec_free (phip);
+  polxvec_free (phiw);
+  polxvec_free (phit);
+}
 static void lnp_aggregate_zq (
   sparsecnst *zqagg,
   const lnp_params pp,
@@ -2094,10 +2236,10 @@ static void lnp_aggregate_zq (
   uint8_t h[16]
 ) {
   zqcnstset lnpzq;
-  size_t i, j, nchalz, nchalx, v0off, umoff, ybits, si_pos_merged;
+  size_t i, j, nchalz, nchalx;
   int64_t *chalz, *chalz1, *chalz2;
-  polxvec chalx, phi, chalx1, chalx2, phip, phiy, phiu, sv, phiv0;
-  polxvec monesxvec, zpx, cx, phit, phiw, b;
+  polxvec chalx, phi, chalx1, chalx2;
+  polxvec monesxvec;
   poly one, mones;
   polx onex;
 
@@ -2145,133 +2287,8 @@ static void lnp_aggregate_zq (
     polxvec_copy (phi, monesxvec);
   }
 #endif
-#if 1
-  // projection of (w,t): c*Pi*(w,t) + c*y = z
-  // y needs to be recomposed from binary yhat
-  chalz = _malloc(256 * sizeof(int64_t));
-  sample_chalz (chalz, 256, h);
-
-  polxvec_init (phip, pp->vtildelen / 2, 1);
-  ybits = pp->logsdp + YHAT_EXTRA_BITS;
-  polxvec_init (phiy, ybits, 1);
-  polxvec_init (zpx, 256 / N, 1);
-  polxvec_init (cx, 256 / N, 1);
-  polxvec_init (b, 256 / N, 1);
-
-  jl_aggregate_mat (phip, jlmat3, jlmat4, chalz); // linear part corresponding to (w,t)
-
-  jl_aggregate_proj (phiy, ybits, chalz); // linear part corresponding to yhat (part of s6)
-  polxvec_init_subvec2 (sv, phiy, ybits - 1, 1, 1); // negate part corresponding to most significant bit (required after jl_aggregate_proj)
-  polxvec_neg (sv, sv);
-  polxvec_neg (phiy, phiy); // because jl_aggregate_proj does -sigmam1()
-  
-  polzvec_topolxvec (zpx, zp, 0, 1, 256 / N);
-  polxvec_fromint64vec2 (cx, chalz, 256 / N, 1, 1); // does this work for N < 256?
-  polxvec_sigmam1 (cx, cx);
-  polxvec_sprod (b, cx, zpx);
-
-  sparsecnst_init (lnpzq->sparse[1], 1);
-  lnpzq->sparse_nchal += 1;
-
-  linfunc_init (lnpzq->sparse[1]->lin, 1, 2, 2);
-
-  polxvec_init (lnpzq->sparse[1]->lin->phi[0], ybits, 1);
-  lnpzq->sparse[1]->lin->off[0] = pp->off[Z1LO] + pp->silen[2] + LIFTS * LOGQ; // s6 position + len(ghat)
-  polxvec_copy (lnpzq->sparse[1]->lin->phi[0], phiy);
-
-  polxvec_init (lnpzq->sparse[1]->lin->phi[1], pp->vtildelen / 2, 1);
-  lnpzq->sparse[1]->lin->off[1] = pp->off[Z1V10];
-  polxvec_copy (lnpzq->sparse[1]->lin->phi[1], phip);
-
-  polxvec_copy (lnpzq->sparse[1]->b, b);
-
-  sparsecnst_refresh (lnpzq->sparse[1]);
-
-  polxvec_free (b);
-  polxvec_free (zpx);
-  polxvec_free (cx);
-  polxvec_free (phip);
-  polxvec_free (phiy);
-  free (chalz);
-#endif
-#if 1
-  // projection of si: c*Pi*si + c*ui = c*2^ki*wi - c*2^ki*ti + c*v0i
-  // ui,v0i need to be recomposed from binary yhat
-
-  polxvec_init (phip, pp->silen_max, 1);
-  polxvec_init (phit, 256 / N, 1);
-  polxvec_init (phiw, 256 / N, 1);
-
-  v0off = 0;
-  umoff = 0;
-  for (i = 0; i < LNP_NPROJ; i++) {
-
-  chalz = _malloc(256 * sizeof(int64_t));
-  sample_chalz (chalz, 256, h);
-
-  jl_aggregate_mat (phip, jlmat1, jlmat2, chalz); // linear part corresponding to si
-
-  polxvec_init (phiv0, pp->k[i], 1);
-  jl_aggregate_proj (phiv0, pp->k[i], chalz); // linear part corresponding to v0ihat (part of xbin)
-  polxvec_init_subvec2 (sv, phiv0, pp->k[i] - 1, 1, 1); // negate part corresponding to most significant bit (required after jl_aggregate_proj)
-  polxvec_neg (sv, sv);
-
-  polxvec_init (phiu, pp->k[i], 1);
-  polxvec_copy (phiu, phiv0); // linear part corresponding to ui (part of s6)
-  polxvec_neg (phiu, phiu); // because jl_aggregate_proj does -sigmam1()
-
-  polxvec_fromint64vec2 (phit, chalz, 256 / N, 1, 1);
-  polxvec_refresh (phit);
-  polxvec_sigmam1 (phit, phit); // linear part corresponding to ti
-  polxvec_scale (phit, phit, (int64_t)1 << pp->k[i]);
-  polxvec_refresh (phit);
-  polxvec_neg (phiw, phit); // linear part corresponding to wi
-
-  sparsecnst_init (lnpzq->sparse[2 + i], 1);
-  lnpzq->sparse_nchal += 1;
-
-  linfunc_init (lnpzq->sparse[2 + i]->lin, 1, 5, 5);
-
-  polxvec_init (lnpzq->sparse[2 + i]->lin->phi[0], pp->k[i], 1);
-  lnpzq->sparse[2 + i]->lin->off[0] = pp->off[Z1LO] + pp->silen[2] + LIFTS * LOGQ + (pp->logsdp + YHAT_EXTRA_BITS) * 256 / N + umoff; // s6 position + len(ghat,yhat,umask[0..i-1])
-  polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[0], phiu);
-
-  polxvec_init (lnpzq->sparse[2 + i]->lin->phi[1], pp->silen[i], 1);
-  // Position of s_i (i=0..3) in merged sxl: Z1S10/Z1S20 for i=0,1; Z1LO for i=2
-  // (s3 is at the start of Z1LO); Z1S40 for i=3 (s4).
-  if (i == 0)      si_pos_merged = pp->off[Z1S10];
-  else if (i == 1) si_pos_merged = pp->off[Z1S20];
-  else if (i == 2) si_pos_merged = pp->off[Z1LO];
-  else             si_pos_merged = pp->off[Z1S40]; // i == 3
-  lnpzq->sparse[2 + i]->lin->off[1] = si_pos_merged;
-  polxvec_init_subvec2 (sv, phip, 0, 1, pp->silen[i]);
-  polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[1], sv);
-
-  polxvec_init (lnpzq->sparse[2 + i]->lin->phi[2], pp->k[i], 1);
-  lnpzq->sparse[2 + i]->lin->off[2] = pp->off[V0HAT] + v0off;
-  polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[2], phiv0);
-
-  polxvec_init (lnpzq->sparse[2 + i]->lin->phi[3], 256 / N, 1);
-  lnpzq->sparse[2 + i]->lin->off[3] = pp->off[Z1V10] + pp->vtildelen / 4 + i; // t[i] within v10
-  polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[3], phit);
-
-  polxvec_init (lnpzq->sparse[2 + i]->lin->phi[4], 256 / N, 1);
-  lnpzq->sparse[2 + i]->lin->off[4] = pp->off[Z1V10] + i; // w[i] within v10
-  polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[4], phiw);
-
-  sparsecnst_refresh (lnpzq->sparse[2 + i]);
-
-  v0off += pp->v0ihatlen[i];
-  umoff += pp->k[i] * 256 / N;
-  polxvec_free (phiu);
-  polxvec_free (phiv0);
-  free (chalz);
-  }
-
-  polxvec_free (phip);
-  polxvec_free (phiw);
-  polxvec_free (phit);
-#endif
+  // projection constraints sparse[1..1+LNP_NPROJ] are built per lift below
+  lnpzq->sparse_nchal += 1 + LNP_NPROJ;
 
   // aggregate
 
@@ -2286,6 +2303,13 @@ static void lnp_aggregate_zq (
   polxvec_init_subvec2 (chalx2, chalx, ist->zqcnst->sigmam1_nchal, 1, lnpzq->sigmam1_nchal);
 
   for (i = 0; i < LIFTS; i++) {
+    // fresh collapse of the projection relations for this lift
+    if (i > 0) {
+      for (j = 1; j < 2 + LNP_NPROJ; j++)
+        sparsecnst_free (lnpzq->sparse[j]);
+    }
+    lnp_projection_cnsts (lnpzq, pp, jlmat1, jlmat2, jlmat3, jlmat4, zp, h);
+
     sample_chalz (chalz, nchalz, h);
     sample_chalx_uniform (chalx, h);
 
