@@ -306,6 +306,12 @@ int lnp_reduce (statement ost, const statement ist, const lnp_proof pi, const ln
 
     lnp_addchecks (ost, pp, pi, chalx, finalcnst);
 
+    for (i = 0; i < LIFTS; i++)
+        sparsecnst_free (zqagg[i]);
+    sparsecnst_free (finalcnst);
+    polxvec_free (ppowers);
+    polxvec_free (m1powers);
+
     reject = 0;
 ret:
     free (jlmat1);
@@ -1232,6 +1238,10 @@ rej_loop2_inner:
     // add verification checks
 
     lnp_addchecks (ost, pp, pi, cx, finalcnst);
+
+    for (i = 0; i < LIFTS; i++)
+        sparsecnst_free (zqagg[i]);
+    sparsecnst_free (finalcnst);
 
     polxvec_free(tmp1x);
     polxvec_free(tmp2x);
