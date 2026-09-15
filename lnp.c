@@ -1668,14 +1668,19 @@ int lnp_params_gen (lnp_params outpp, size_t *pibits, size_t *owtbits, const sta
 
     // check conditions on parameters
 
-    if (!(2 * N * silen[3] * (2 * JL_INF_SLACK) * (2 * JL_INF_SLACK) < Q))
+    // binary check of s4 holds over Z: 2*d*n4*(2*9.75/0.49)^2 <= q
+    if (!(2 * N * silen[3] * (2 * JL_INF_SLACK) * (2 * JL_INF_SLACK) <= Q))
         goto ret;
-    if (!(2 * sdp * sqrtl(512/26) * 2048 * 41 < Q))
+    // approximate norm proof of vtilde1: 41*2048*2*sd*sqrt(512/26) <= q
+    if (!(2 * sdp * sqrtl(512.0L / 26) * 2048 * 41 <= Q))
         goto ret;
-    if (!(2 * (2 * sdp * sqrtl(512/26)) * (2 * sdp * sqrtl(512/26)) < Q))
+    // binary check of vtilde1 holds over Z: 2*(2*sd*sqrt(512/26))^2 <= q
+    if (!(2 * (2 * sdp * sqrtl(512.0L / 26)) * (2 * sdp * sqrtl(512.0L / 26)) <= Q))
         goto ret;
+    // first projections: the extracted projection has linf norm <= 2^(k[i]+1),
+    // so the JL lower bound needs 61*2^(k[i]+1)/0.49 <= q
     for (i = 0; i < LNP_NPROJ; i++) {
-        if (!((1ULL << k[i]) * JL_INF_QDIV / JL_INF_DEN < Q))
+        if (!((long double)(1ULL << (k[i] + 1)) * JL_INF_QDIV / JL_INF_DEN <= Q))
             goto ret;
     }
 
