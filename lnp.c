@@ -1603,14 +1603,18 @@ int lnp_params_gen (lnp_params outpp, size_t *pibits, size_t *owtbits, const sta
     }
 
     // msis l2 hardness 2
-    // z2v is a sub-vector of the merged Z1LO/Z1HI blocks, so its norm is
-    // upper-bounded (worst case) by the full merged block norm. Include this
-    // upper bound so kappa_l2msis2 covers the actual extractable norm of
-    // (z1v, z2v) from the v-opening.
+    // The v-opening A1v*z1v + A2v*z2v = wv + c*tv involves
+    //  - z1v = (v1, v2), i.e. the two parts Z1V1x and Z1V2x of vtildelen/2
+    //    polynomials each, both with the bound (z1v0betasq, z1v1betasq), and
+    //  - z2v, which is a sub-vector of the merged Z1LO/Z1HI blocks and whose
+    //    norm is therefore only known to be bounded by the full merged block
+    //    norm (z1s0betasq[2], z1s1betasq[2]).
+    // The bound on ||(z1v, z2v)|| is the sum of the squared bounds of the
+    // parts the next round checks, so the v part is counted twice.
 
     sum = 0;
     tmp = sqrtl (z1v0betasq) + sqrtl (z1v1betasq)*(1ULL<<b1);
-    sum += tmp * tmp;
+    sum += 2 * tmp * tmp;
     tmp = sqrtl (z1s0betasq[2]) + sqrtl(z1s1betasq[2])*(1ULL<<b2);
     sum += tmp * tmp;
     beta_l2msis2 = 8 * T * sqrtl(sum) * JL_INF_SLACK;
