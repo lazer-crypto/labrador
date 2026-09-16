@@ -1672,8 +1672,8 @@ int lnp_params_gen (lnp_params outpp, size_t *pibits, size_t *owtbits, const sta
 
     // check conditions on parameters
 
-    // binary check of s4 holds over Z: 2*d*n4*(2*9.75/0.49)^2 <= q
-    if (!(2 * N * silen[3] * (2 * JL_INF_SLACK) * (2 * JL_INF_SLACK) <= Q))
+    // binary check of s4 holds over Z: 2*d*n4*(4*9.75/0.49)^2 <= q
+    if (!(2 * N * silen[3] * (4 * JL_INF_SLACK) * (4 * JL_INF_SLACK) <= Q))
         goto ret;
     // approximate norm proof of vtilde1: 41*2048*2*sd*sqrt(512/26) <= q
     if (!(2 * sdp * sqrtl(512.0L / 26) * 2048 * 41 <= Q))
