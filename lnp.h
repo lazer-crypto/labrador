@@ -5,12 +5,12 @@
 
 // Decompose Pi*si + u = 2^k*v1 + v0, v1 ternary, v0,u in
 // [2^(k-1),..,2^(k-1)-1].
-// With prob. > 0.9999, there are at most this many carries
-// (1s and -1s in v1).
 // s5 = sigmam1(s4) has the same norm as s4,
 // so we only project s1..s4 (not s5)
 #define LNP_NPROJ       4
-#define LNP_MAXCARRIES  32
+// LNP_MAXCARRIES = 83 gives Pr[Bin(256,p) > 83] < 2^-130 per projection and a
+// union bound of 2^-128.45 over the four projections.
+#define LNP_MAXCARRIES  83
 // The inner commitments ts = A1*stilde + A2s*rs and tv = A2*vtilde + A2v*rv
 // are hiding under M-LWE in knapsack form: (A2s|phi_rand^T)*rs has
 // kappa_l2msis1 + 1 output polynomials (the garbage term u contains
