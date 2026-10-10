@@ -2619,7 +2619,7 @@ void ort_prove(
 
   polxvec_init(projx, 256/N, 1);
   rowy = _aligned_alloc(64, pp->m * pp->n * sizeof(poly));
-  proj32m = _malloc(256 * pp->r * sizeof(int32_t));
+  proj32m = pp->nvdiff ? _malloc(256 * pp->r * sizeof(int32_t)) : NULL;
 
   for(i=0;i<pp->nvi;i++){
     if(!pp->isproj[i]){

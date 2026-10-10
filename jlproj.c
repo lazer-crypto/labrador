@@ -323,6 +323,21 @@ void polyvec_jlproj_add_bin1_multi(int32_t *r, poly *const *p, const size_t *len
 
   k = 2;
   for(i=0;i<maxlen;i++) {
+    g = 0;
+    for(l=0;l<np;l++)
+      g += (i < len[l]);
+    if(g < 3) {
+      for(j=0;j<N/64;j++) {
+        pf = (k++ < N/64*maxlen) ? 2*2048 : 0;
+        for(l=0;l<np;l++) {
+          if(i < len[l]) {
+            jlproj_add64(&r[256*l],&p[l][i]->c[64*j],&mat1[256*N/8*i+2048*j],pf);
+            jlproj_add64(&r[256*l],&p[l][i]->c[64*j],&mat2[256*N/8*i+2048*j],pf);
+          }
+        }
+      }
+      continue;
+    }
     for(j=0;j<N/64;j++) {
       pf = (k++ < N/64*maxlen) ? 2*2048 : 0;
       jlproj_idx64(idx[0],&mat1[256*N/8*i+2048*j],pf);
