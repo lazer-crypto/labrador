@@ -701,25 +701,20 @@ void lab_quadg(
   int tail
 )
 {
-  polxvec gx, sxi, sxj;
-  size_t i, j, len, gpos = 0;
-  polxvec_init(gx, 1, 1);
+  polxvec gx, gx_sv;
+  size_t i;
+  const size_t m = (r*r+r)/2;
 
-  for(i=0;i<r;i++){
-    for(j=i;j<r;j++){
-      len = MIN(sx[i]->len, sx[j]->len);
-      polxvec_init_subvec2(sxi, sx[i], 0, 1, len);
-      polxvec_init_subvec2(sxj, sx[j], 0, 1, len);
-      polxvec_sprod(gx, sxi, sxj);
-      if(tail){
-        polzvec_frompolxvec(&gz[gpos], gx, 0, 1, 1);
-        polzvec_center(&gz[gpos], 1);
-        gpos++;
-      }
-      else{
-        polxvec_decompose(&gy[gpos], gx, 1, fg, bg);
-        gpos += fg;
-      }
+  polxvec_init(gx, m, 1);
+  polxvec_sprod_pairs(gx, sx, NULL, r);
+  if(tail){
+    polzvec_frompolxvec(gz, gx, 0, 1, m);
+    polzvec_center(gz, m);
+  }
+  else{
+    for(i=0;i<m;i++){
+      polxvec_init_subvec2(gx_sv, gx, i, 1, 1);
+      polxvec_decompose(&gy[i*fg], gx_sv, 1, fg, bg);
     }
   }
   polxvec_free(gx);
@@ -741,31 +736,15 @@ void lab_ling(
   size_t bu
 )
 {
-  polxvec hx, phi_sv, sx_sv;
-  size_t i, j, len, hpos = 0;
+  polxvec hx, hx_sv;
+  size_t i;
+  const size_t m = (r*r+r)/2;
 
-  polxvec_init(hx, 1, 1);
-
-  for(i=0;i<r;i++){
-    for(j=i;j<r;j++){
-      if(i == j){
-        polxvec_sprod(hx, phi[i], sx[i]);
-      }
-      else{
-        len = MIN(phi[i]->len, sx[j]->len);
-        polxvec_init_subvec2(phi_sv, phi[i], 0, 1, len);
-        polxvec_init_subvec2(sx_sv, sx[j], 0, 1, len);
-        polxvec_sprod(hx, phi_sv, sx_sv);
-
-        len = MIN(phi[j]->len, sx[i]->len);
-        polxvec_init_subvec2(phi_sv, phi[j], 0, 1, len);
-        polxvec_init_subvec2(sx_sv, sx[i], 0, 1, len);
-        polxvec_sprod_add(hx, phi_sv, sx_sv);
-      }
-
-      polxvec_decompose(&hy[hpos], hx, 1, fu, bu);
-      hpos += fu;
-    }
+  polxvec_init(hx, m, 1);
+  polxvec_sprod_pairs(hx, phi, sx, r);
+  for(i=0;i<m;i++){
+    polxvec_init_subvec2(hx_sv, hx, i, 1, 1);
+    polxvec_decompose(&hy[i*fu], hx_sv, 1, fu, bu);
   }
   polxvec_free(hx);
 }

@@ -1412,6 +1412,203 @@ void polyvec_pairwise_sprod(poly *g, const poly *a, const poly *b, size_t r, siz
     polyvec_pairwise_doubleoffdiag(g,r,prime);
 }
 
+#define SPROD_PAIRS_STEPS 32
+#define SPROD_PAIRS_BUDGET 640
+
+static void sprod_pairs_pack(__m512i *t, const poly *a, ssize_t stride, size_t len, size_t sb, const pdata prime) {
+  size_t i,j;
+  __m512i f,g,h;
+  const __m512i p = _mm512_set1_epi16(prime->p);
+  const __m512i v = _mm512_set1_epi16(prime->v);
+  const __m512i shift = _mm512_set1_epi16(1 << (16+15-27));
+  const __m512i zero = _mm512_setzero_si512();
+
+  for(j=0;j<MIN(sb,len/2);j++) {
+    for(i=0;i<N/32;i++) {
+      f = _mm512_load_si512(&a[stride*(2*j+0)]->v[i]);
+      g = _mm512_load_si512(&a[stride*(2*j+1)]->v[i]);
+      h = _mm512_mulhi_epi16(f,v);
+      h = _mm512_mulhrs_epi16(h,shift);
+      h = _mm512_mullo_epi16(h,p);
+      f = _mm512_sub_epi16(f,h);
+      h = _mm512_mulhi_epi16(g,v);
+      h = _mm512_mulhrs_epi16(h,shift);
+      h = _mm512_mullo_epi16(h,p);
+      g = _mm512_sub_epi16(g,h);
+      _mm512_store_si512(&t[(2*i+0)*sb+j],_mm512_unpacklo_epi16(f,g));
+      _mm512_store_si512(&t[(2*i+1)*sb+j],_mm512_unpackhi_epi16(f,g));
+    }
+  }
+  if(j < sb && 2*j < len) {
+    for(i=0;i<N/32;i++) {
+      f = _mm512_load_si512(&a[stride*2*j]->v[i]);
+      h = _mm512_mulhi_epi16(f,v);
+      h = _mm512_mulhrs_epi16(h,shift);
+      h = _mm512_mullo_epi16(h,p);
+      f = _mm512_sub_epi16(f,h);
+      _mm512_store_si512(&t[(2*i+0)*sb+j],_mm512_unpacklo_epi16(f,zero));
+      _mm512_store_si512(&t[(2*i+1)*sb+j],_mm512_unpackhi_epi16(f,zero));
+    }
+    j += 1;
+  }
+  for(;j<sb;j++)
+    for(i=0;i<N/16;i++)
+      _mm512_store_si512(&t[i*sb+j],zero);
+}
+
+static inline __m512i sprod_pairs_reduce(__m512i c, __m512i tab) {
+  return _mm512_sub_epi32(c,_mm512_permutexvar_epi32(_mm512_srai_epi32(c,28),tab));
+}
+
+#define ROW(OP,i) OP(i,0); OP(i,1); OP(i,2); OP(i,3); OP(i,4); OP(i,5)
+#define ALL(OP) ROW(OP,0); ROW(OP,1)
+#define LOADC(i,j) if(mr > i && nr > j) c##i##j = _mm512_load_si512(&z[i*ldz+j])
+#define MADD(i,j) if(mr > i && nr > j) c##i##j = _mm512_dpwssd_epi32(c##i##j,u##i,_mm512_load_si512(&y[j*ldt+k]))
+#define REDC(i,j) if(mr > i && nr > j) c##i##j = sprod_pairs_reduce(c##i##j,tab)
+#define STOREC(i,j) if(mr > i && nr > j) _mm512_store_si512(&z[i*ldz+j],c##i##j)
+#define LOADU(i) if(mr > i) u##i = _mm512_load_si512(&x[i*ldt+k])
+
+static inline __attribute__((always_inline))
+void sprod_pairs_tile_mn(__m512i *z, size_t ldz, const __m512i *x, const __m512i *y, size_t ldt, size_t sb,
+                         size_t s, __m512i tab, const size_t mr, const size_t nr)
+{
+  size_t k,l;
+  __m512i u0,u1;
+  __m512i c00,c01,c02,c03,c04,c05,c10,c11,c12,c13,c14,c15;
+
+  ALL(LOADC);
+  for(k=0;k<sb;) {
+    for(l=MIN(sb,k+s);k<l;k++) {
+      LOADU(0); LOADU(1);
+      ALL(MADD);
+    }
+    ALL(REDC);
+  }
+  ALL(STOREC);
+}
+
+#undef ROW
+#undef ALL
+#undef LOADC
+#undef MADD
+#undef REDC
+#undef STOREC
+#undef LOADU
+
+static inline __attribute__((always_inline))
+void sprod_pairs_tile_m(__m512i *z, size_t ldz, const __m512i *x, const __m512i *y, size_t ldt, size_t sb,
+                        size_t s, __m512i tab, const size_t mr, size_t nr)
+{
+  switch(nr) {
+    case 1: sprod_pairs_tile_mn(z,ldz,x,y,ldt,sb,s,tab,mr,1); break;
+    case 2: sprod_pairs_tile_mn(z,ldz,x,y,ldt,sb,s,tab,mr,2); break;
+    case 3: sprod_pairs_tile_mn(z,ldz,x,y,ldt,sb,s,tab,mr,3); break;
+    case 4: sprod_pairs_tile_mn(z,ldz,x,y,ldt,sb,s,tab,mr,4); break;
+    case 5: sprod_pairs_tile_mn(z,ldz,x,y,ldt,sb,s,tab,mr,5); break;
+    default: sprod_pairs_tile_mn(z,ldz,x,y,ldt,sb,s,tab,mr,6); break;
+  }
+}
+
+static void sprod_pairs_tile(__m512i *z, size_t ldz, const __m512i *x, const __m512i *y, size_t ldt, size_t sb,
+                             size_t s, __m512i tab, size_t mr, size_t nr)
+{
+  if(mr == 1)
+    sprod_pairs_tile_m(z,ldz,x,y,ldt,sb,s,tab,1,nr);
+  else
+    sprod_pairs_tile_m(z,ldz,x,y,ldt,sb,s,tab,2,nr);
+}
+
+static inline __m512i sprod_pairs_montred(__m512i z, __m512i p, __m512i pinv) {
+  __m512i t;
+
+  t = _mm512_mullo_epi16(z,pinv);
+  t = _mm512_mulhi_epi16(t,p);
+  t = _mm512_srai_epi32(_mm512_slli_epi32(t,16),16);
+  return _mm512_sub_epi32(_mm512_srai_epi32(z,16),t);
+}
+
+void polyvec_sprod_pairs(poly *g, ssize_t stride_g, const poly **a, const poly **b, const size_t *la,
+                         const size_t *lb, ssize_t stride, size_t r, const pdata prime)
+{
+  size_t i,j,k,l,n,s,sb,sm,u,v;
+  size_t o[r], q[r], len[r];
+  int64_t c;
+  __m512i *z, *ta, *tb, f, h, tab;
+  __attribute__((aligned(64)))
+  int32_t t[16];
+  const int64_t bnd = (prime->p >> 1) + 16;
+  const size_t nt = (b) ? 2 : 1;
+  const __m512i p = _mm512_set1_epi16(prime->p);
+  const __m512i pinv = _mm512_set1_epi16(prime->pinv);
+  const __m512i vv = _mm512_set1_epi16(prime->v);
+  const __m512i shift = _mm512_set1_epi16(1 << (16+15-27));
+
+  for(i=0;i<r;i++) {
+    len[i] = (b) ? MAX(la[i],lb[i]) : la[i];
+    for(j=i;j>0 && len[o[j-1]] < len[i];j--)
+      o[j] = o[j-1];
+    o[j] = i;
+  }
+  for(i=0;i<r;i++)
+    q[o[i]] = i;
+
+  for(i=0;i<16;i++) {
+    c = ((int64_t)((i < 8) ? i : i-16) << 28) + ((int64_t)1 << 27);
+    t[i] = c - modp(c,prime);
+  }
+  tab = _mm512_load_si512(t);
+  s = ((((int64_t)1 << 31) - 1 - ((int64_t)1 << 27) - prime->p)/(2*bnd*bnd));
+  sm = MAX(1,MIN(SPROD_PAIRS_STEPS,SPROD_PAIRS_BUDGET/(nt*r)));
+  z = _aligned_alloc(64,(r*r + nt*r*sm)*(N/16)*sizeof(__m512i));
+  ta = &z[r*r*(N/16)];
+  tb = &ta[r*sm*(N/16)];
+  memset(z,0,r*r*(N/16)*sizeof(__m512i));
+
+  n = r;
+  for(l=0;l<len[o[0]];l+=2*sb) {
+    sb = MIN(sm,(len[o[0]]-l+1)/2);
+    while(len[o[n-1]] <= l)
+      n -= 1;
+    for(i=0;i<n;i++) {
+      j = o[i];
+      sprod_pairs_pack(&ta[i*sb*(N/16)],&a[j][stride*l],stride,(la[j] > l) ? la[j]-l : 0,sb,prime);
+      if(b)
+        sprod_pairs_pack(&tb[i*sb*(N/16)],&b[j][stride*l],stride,(lb[j] > l) ? lb[j]-l : 0,sb,prime);
+    }
+    for(k=0;k<N/16;k++) {
+      for(i=0;i<n;i+=2) {
+        for(j=(b) ? 0 : i;j<n;j+=6)
+          sprod_pairs_tile(&z[(k*r+i)*r+j],r,&ta[(i*(N/16)+k)*sb],&((b) ? tb : ta)[(j*(N/16)+k)*sb],
+                           sb*(N/16),sb,s,tab,MIN(2,n-i),MIN(6,n-j));
+      }
+    }
+  }
+
+  l = 0;
+  for(i=0;i<r;i++) {
+    for(j=i;j<r;j++) {
+      u = MIN(q[i],q[j]);
+      v = MAX(q[i],q[j]);
+      for(k=0;k<N/32;k++) {
+        f = z[((2*k+0)*r+u)*r+v];
+        h = z[((2*k+1)*r+u)*r+v];
+        if(b && u != v) {
+          f = _mm512_add_epi32(f,z[((2*k+0)*r+v)*r+u]);
+          h = _mm512_add_epi32(h,z[((2*k+1)*r+v)*r+u]);
+        }
+        f = _mm512_packs_epi32(sprod_pairs_montred(f,p,pinv),sprod_pairs_montred(h,p,pinv));
+        h = _mm512_mulhi_epi16(f,vv);
+        h = _mm512_mulhrs_epi16(h,shift);
+        h = _mm512_mullo_epi16(h,p);
+        _mm512_store_si512(&g[stride_g*l]->v[k],_mm512_sub_epi16(f,h));
+      }
+      l += 1;
+    }
+  }
+
+  free(z);
+}
+
 void poly_scale(poly r, const poly a, int16_t s, const pdata prime) {
   size_t i;
   __m512i f,g;

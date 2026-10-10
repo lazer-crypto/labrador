@@ -921,6 +921,51 @@ size_t polxvec_pairwise_sprod(polxvec g, const polxvec a, const polxvec b, size_
   return m;
 }
 
+static double polxvec_sprod_width(const polxvec a, const polxvec b) {
+  size_t i;
+  double w = 0;
+  const size_t len = MIN(a->len,b->len);
+
+  for(i=0;i<len;i++)
+    w += N*a->widths[i*a->stride]*b->widths[i*b->stride];
+  return w;
+}
+
+void polxvec_sprod_pairs(polxvec g, const polxvec a[], const polxvec b[], size_t r) {
+  size_t i,j,k;
+  size_t la[r], lb[r];
+  const poly *pa[r], *pb[r];
+
+  assert(g->len == (r*r+r)/2);
+  for(i=0;i<r;i++) {
+    assert(a[i]->stride == a[0]->stride && (!b || b[i]->stride == a[0]->stride));
+    la[i] = a[i]->len;
+    lb[i] = (b) ? b[i]->len : 0;
+  }
+  if(g->widths) {
+    k = 0;
+    for(i=0;i<r;i++) {
+      for(j=i;j<r;j++) {
+        if(!b)
+          g->widths[k*g->stride] = polxvec_sprod_width(a[i],a[j]);
+        else if(i == j)
+          g->widths[k*g->stride] = polxvec_sprod_width(a[i],b[i]);
+        else
+          g->widths[k*g->stride] = polxvec_sprod_width(a[i],b[j]) + polxvec_sprod_width(a[j],b[i]);
+        assert(g->widths[k*g->stride] <= MAXWIDTH);
+        k += 1;
+      }
+    }
+  }
+  for(k=0;k<K;k++) {
+    for(i=0;i<r;i++) {
+      pa[i] = a[i]->proj[k];
+      pb[i] = (b) ? b[i]->proj[k] : NULL;
+    }
+    polyvec_sprod_pairs(g->proj[k],g->stride,pa,(b) ? pb : NULL,la,lb,a[0]->stride,r,primes[k]);
+  }
+}
+
 void polx_bindec(poly *r, const polx a, ssize_t stride, size_t t) {
   polz b;
 
