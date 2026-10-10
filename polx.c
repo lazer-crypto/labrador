@@ -312,21 +312,17 @@ void polx_frompoly(polx r, const poly a, double width) {
   assert(width <= MAXWIDTH);
   r->width = width;
   for(i=0;i<K;i++)
-    poly_scale(r->proj[i],a,primes[i]->s,primes[i]);
-  polx_ntt(r,r);
+    poly_ntt_scale(r->proj[i],a,primes[i]->s,primes[i]);
 }
 
 void polxvec_frompolyvec(polxvec r, const poly *a, ssize_t stride, size_t len, double width) {
-  size_t i,j,k;
+  size_t i,j;
 
   assert(r->len >= len);
   polxvec_setwidths1(r,0,1,len,width);
-  for(j=0;(k=MIN(32,len-j));j+=k) {
-    for(i=0;i<K;i++) {
-      polyvec_scale(&r->proj[i][j*r->stride],&a[j*stride],r->stride,stride,k,primes[i]->s,primes[i]);
-      polyvec_ntt(&r->proj[i][j*r->stride],&r->proj[i][j*r->stride],r->stride,r->stride,k,primes[i]);
-    }
-  }
+  for(j=0;j<len;j++)
+    for(i=0;i<K;i++)
+      poly_ntt_scale(r->proj[i][j*r->stride],a[j*stride],primes[i]->s,primes[i]);
 }
 
 void polx_frompolxvec(polx r, const polxvec a, size_t j) {

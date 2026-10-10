@@ -29,7 +29,17 @@ static inline __m512i divmont(const __m512i a, const __m512i p, const __m512i pi
   return r;
 }
 
-void poly_ntt(poly r, const poly a, const pdata prime) {
+static int16_t montmul(int16_t a, int16_t b, const pdata prime) {
+  int32_t t;
+  int16_t m;
+
+  t = (int32_t)a*b;
+  m = t*prime->pinv;
+  return (t - (int32_t)m*prime->p) >> 16;
+}
+
+static inline __attribute__((always_inline))
+void ntt(poly r, const poly a, int scale, int16_t s, const pdata prime) {
   size_t i;
   __m512i f[N/32],g[N/32];
   __m512i zeta,zeta_pinv;
@@ -39,8 +49,12 @@ void poly_ntt(poly r, const poly a, const pdata prime) {
   const __m512i pinv = _mm512_set1_epi16(prime->pinv);
 
 load:
-  for(i=0;i<N/32;i++)
+  zeta = _mm512_set1_epi16(s);
+  zeta_pinv = _mm512_set1_epi16(s*prime->pinv);
+  for(i=0;i<N/32;i++) {
     f[i] = _mm512_load_si512(&a->v[i]);
+    if(scale) f[i] = mulmod(f[i],zeta,zeta_pinv,p);
+  }
 
 level0:
   zeta = _mm512_set1_epi16(prime->i);
@@ -195,11 +209,21 @@ scale:
   }
 }
 
-void poly_invntt(poly r, const poly a, const pdata prime) {
+void poly_ntt(poly r, const poly a, const pdata prime) {
+  ntt(r,a,0,0,prime);
+}
+
+void poly_ntt_scale(poly r, const poly a, int16_t s, const pdata prime) {
+  ntt(r,a,1,s,prime);
+}
+
+static inline __attribute__((always_inline))
+void invntt(poly r, const poly a, int scale, int16_t s, const pdata prime) {
   size_t i;
   __m512i t;
   __m512i f[N/32],g[N/32];
   __m512i zeta,zeta_pinv;
+  __m512i sc,sc_pinv;
   __m512i permwidx = _mm512_set_epi16( 0, 1, 2, 3, 4, 5, 6, 7,
                                        8, 9,10,11,12,13,14,15,
                                       16,17,18,19,20,21,22,23,
@@ -352,8 +376,16 @@ level1:
   }
 
 level0:
-  zeta = _mm512_set1_epi16(prime->zetas->c[1]);
-  zeta_pinv = _mm512_set1_epi16(prime->zetas_pinv->c[1]);
+  if(scale) {
+    sc = _mm512_set1_epi16(modp(montmul(s,1,prime),prime));
+    sc_pinv = _mm512_mullo_epi16(sc,pinv);
+    zeta = _mm512_set1_epi16(modp(montmul(s,prime->zetas->c[1],prime),prime));
+    zeta_pinv = _mm512_mullo_epi16(zeta,pinv);
+  }
+  else {
+    zeta = _mm512_set1_epi16(prime->zetas->c[1]);
+    zeta_pinv = _mm512_set1_epi16(prime->zetas_pinv->c[1]);
+  }
   for(i=0;i<N/64;i++) {
     g[i] = _mm512_shuffle_i64x2(f[2*i+0],f[2*i+1],0x44);
     g[N/64+i] = _mm512_shuffle_i64x2(f[2*i+0],f[2*i+1],0xEE);
@@ -361,13 +393,21 @@ level0:
     t = _mm512_add_epi16(g[i],g[N/64+i]);
     g[N/64+i] = _mm512_sub_epi16(g[N/64+i],g[i]);
 
-    g[i] = divmont(t,p,pinv);
+    g[i] = scale ? mulmod(t,sc,sc_pinv,p) : divmont(t,p,pinv);
     g[N/64+i] = mulmod(g[N/64+i],zeta,zeta_pinv,p);
   }
 
 store:
   for(i=0;i<N/32;i++)
     _mm512_store_si512(&r->v[i],g[i]);
+}
+
+void poly_invntt(poly r, const poly a, const pdata prime) {
+  invntt(r,a,0,0,prime);
+}
+
+void poly_invntt_scale(poly r, const poly a, int16_t s, const pdata prime) {
+  invntt(r,a,1,s,prime);
 }
 
 void poly_nttunpack(poly r, const pdata prime) {
