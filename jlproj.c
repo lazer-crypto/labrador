@@ -39,7 +39,7 @@ void polyvec_jlproj_add_bin1(
  * 8 qwords -> zvec: 1 col stride
  */
 
-static void jlproj_add64(int32_t out[256], const int16_t in[64], const uint8_t mat[256*64/8]) {
+static void jlproj_add64(int32_t out[256], const int16_t in[64], const uint8_t mat[256*64/8], size_t pf) {
   int i;
   __m512i a,b,c,d;
   __m512i e,f,g,h;
@@ -155,10 +155,10 @@ static void jlproj_add64(int32_t out[256], const int16_t in[64], const uint8_t m
   r = _mm512_unpackhi_epi64(y,z);  // ++++,+++-,++-+,++--,+-++,+-+-,+--+,+---,-+++,-++-,-+-+,-+--,--++,--+-,---+,----
 
   for(i=0;i<256/32;i++) {
-    _mm_prefetch((const char*)&mat[2*256*64/8+32*16/8*i+256*16/8*0],_MM_HINT_T0);
-    _mm_prefetch((const char*)&mat[2*256*64/8+32*16/8*i+256*16/8*1],_MM_HINT_T0);
-    _mm_prefetch((const char*)&mat[2*256*64/8+32*16/8*i+256*16/8*2],_MM_HINT_T0);
-    _mm_prefetch((const char*)&mat[2*256*64/8+32*16/8*i+256*16/8*3],_MM_HINT_T0);
+    _mm_prefetch((const char*)&mat[pf+32*16/8*i+256*16/8*0],_MM_HINT_T0);
+    _mm_prefetch((const char*)&mat[pf+32*16/8*i+256*16/8*1],_MM_HINT_T0);
+    _mm_prefetch((const char*)&mat[pf+32*16/8*i+256*16/8*2],_MM_HINT_T0);
+    _mm_prefetch((const char*)&mat[pf+32*16/8*i+256*16/8*3],_MM_HINT_T0);
     s = _mm512_load_si512((__m512i*)&mat[32*16/8*i+256*16/8*0]);
     t = _mm512_load_si512((__m512i*)&mat[32*16/8*i+256*16/8*1]);
     u = _mm512_load_si512((__m512i*)&mat[32*16/8*i+256*16/8*2]);
@@ -254,14 +254,16 @@ void poly_jlproj_add(int32_t out[256], const poly in, const uint8_t mat[256*N/8]
   size_t i;
 
   for(i=0;i<N/64;i++)
-    jlproj_add64(out,&in->c[64*i],&mat[2048*i]);
+    jlproj_add64(out,&in->c[64*i],&mat[2048*i],(i+2 < N/64) ? 2*2048 : 0);
 }
 
 void polyvec_jlproj_add(int32_t r[256], const poly *p, size_t len, const uint8_t *mat) {
-  size_t i;
+  size_t i,j,k;
 
+  k = 2;
   for(i=0;i<len;i++)
-    poly_jlproj_add(r,p[i],&mat[256*N/8*i]);
+    for(j=0;j<N/64;j++)
+      jlproj_add64(r,&p[i]->c[64*j],&mat[256*N/8*i+2048*j],(k++ < N/64*len) ? 2*2048 : 0);
 }
 
 static void jlproj_collapstab(__m512i tab[16], const int64_t alpha[32]) {
