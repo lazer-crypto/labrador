@@ -2,6 +2,7 @@
 #include "comkey.h"
 #include "data.h"
 #include "fips202.h"
+#include "gaussian.h"
 #include "jlproj.h"
 #include "malloc.h"
 #include "lnp.h"
@@ -123,45 +124,137 @@ static void polzvec_topolyvec_(poly *r, const polz *a, size_t len) {
 
 static int lnp_polxvec_iszero_at(const polxvec r, size_t i) {
   size_t j,k;
-  __m512i f = _mm512_setzero_si512();
+  __m512i f;
 
-  for(k=0;k<K;k++)
-    for(j=0;j<N/32;j++)
-      f = _mm512_or_si512(f,_mm512_load_si512(&r->proj[k][r->stride*i]->v[j]));
-  return !_mm512_test_epi64_mask(f,f);
+  for(k=0;k<K;k++) {
+    for(j=0;j<N/32;j++) {
+      f = _mm512_load_si512(&r->proj[k][r->stride*i]->v[j]);
+      if(_mm512_test_epi64_mask(f,f))
+        return 0;
+    }
+  }
+  return 1;
+}
+
+static size_t lnp_polxvec_nonzero_runs(size_t *runs, const polxvec r) {
+  size_t i,j,n;
+
+  n = 0;
+  for(i=0;i<r->len;i=j) {
+    for(;i<r->len && lnp_polxvec_iszero_at(r,i);i++);
+    for(j=i;j<r->len && !lnp_polxvec_iszero_at(r,j);j++);
+    if(j > i) {
+      runs[2*n+0] = i;
+      runs[2*n+1] = j-i;
+      n++;
+    }
+  }
+  return n;
+}
+
+static void lnp_polxvec_refresh_nonzero(polxvec r) {
+  size_t i,n,*runs;
+  polxvec sv;
+
+  runs = _malloc((r->len+2)*sizeof(size_t));
+  n = lnp_polxvec_nonzero_runs(runs,r);
+  for(i=0;i<n;i++) {
+    polxvec_init_subvec2(sv,r,runs[2*i],1,runs[2*i+1]);
+    polxvec_refresh(sv);
+  }
+  free(runs);
 }
 
 static void lnp_sparsecnst_nonzero_view(sparsecnst v, const sparsecnst c) {
-  size_t i,j,k,n,p,len;
-  size_t *runs;
+  size_t k,m,n,p,len;
+  size_t *runs, *part;
 
   len = 0;
   for(p=0;p<c->lin->nparts;p++)
-    len += c->lin->phi[p]->len/2 + 1;
+    len += c->lin->phi[p]->len + 2;
   runs = _malloc(3*len*sizeof(size_t));
+  part = &runs[2*len];
   n = 0;
   for(p=0;p<c->lin->nparts;p++) {
-    for(i=0;i<c->lin->phi[p]->len;i=j) {
-      for(;i<c->lin->phi[p]->len && lnp_polxvec_iszero_at(c->lin->phi[p],i);i++);
-      for(j=i;j<c->lin->phi[p]->len && !lnp_polxvec_iszero_at(c->lin->phi[p],j);j++);
-      if(j > i) {
-        runs[3*n+0] = p;
-        runs[3*n+1] = i;
-        runs[3*n+2] = j-i;
-        n++;
-      }
-    }
+    m = lnp_polxvec_nonzero_runs(&runs[2*n],c->lin->phi[p]);
+    for(k=n;k<n+m;k++)
+      part[k] = p;
+    n += m;
   }
 
   v->quad[0] = c->quad[0];
   v->b[0] = c->b[0];
   linfunc_init(v->lin, c->lin->rank, n, n);
   for(k=0;k<n;k++) {
-    p = runs[3*k];
-    v->lin->off[k] = c->lin->off[p] + runs[3*k+1];
-    polxvec_init_subvec2(v->lin->phi[k], c->lin->phi[p], runs[3*k+1], 1, runs[3*k+2]);
+    p = part[k];
+    v->lin->off[k] = c->lin->off[p] + runs[2*k];
+    polxvec_init_subvec2(v->lin->phi[k], c->lin->phi[p], runs[2*k], 1, runs[2*k+1]);
   }
   free(runs);
+}
+
+static void lnp_polzvec_fromint32(polz *r, const int32_t *a, size_t len) {
+  size_t i,j,k;
+  __m512i f,g;
+  const __m512i mask14 = _mm512_set1_epi32(0x3FFF);
+
+  for(i=0;i<len;i++) {
+    for(j=0;j<N/16;j++) {
+      f = _mm512_load_si512(&a[N*i+16*j]);
+      for(k=0;k<L-1;k++) {
+        g = _mm512_and_si512(f,mask14);
+        f = _mm512_srai_epi32(f,14);
+        _mm256_store_si256((__m256i*)&r[i]->limbs[k]->c[16*j],_mm512_cvtepi32_epi16(g));
+      }
+      _mm256_store_si256((__m256i*)&r[i]->limbs[L-1]->c[16*j],_mm512_cvtepi32_epi16(f));
+    }
+  }
+}
+
+static void lnp_polyvec_chalmul(int32_t *r, const polz c, const poly *s, size_t len) {
+  size_t i,j,k,m;
+  int64_t v;
+  int32_t cv[N];
+  size_t idx[N];
+  __m512i f,g;
+  alignas(64) int32_t b[2*N];
+
+  m = 0;
+  for(j=0;j<N;j++) {
+    v = 0;
+    for(k=L;k-->0;)
+      v = v*((int64_t)1 << 14) + c->limbs[k]->c[j];
+    cv[m] = v;
+    idx[m] = j;
+    m += (v != 0);
+  }
+
+  for(i=0;i<len;i++) {
+    for(j=0;j<N/16;j++) {
+      f = _mm512_cvtepi16_epi32(_mm256_load_si256((const __m256i*)&s[i]->c[16*j]));
+      _mm512_store_si512(&b[N+16*j],f);
+      _mm512_store_si512(&b[16*j],_mm512_sub_epi32(_mm512_setzero_si512(),f));
+    }
+    for(j=0;j<N/16;j++) {
+      g = _mm512_setzero_si512();
+      for(k=0;k<m;k++)
+        g = _mm512_add_epi32(g,_mm512_mullo_epi32(_mm512_set1_epi32(cv[k]),_mm512_loadu_si512(&b[N+16*j-idx[k]])));
+      _mm512_store_si512(&r[N*i+16*j],g);
+    }
+  }
+}
+
+static int64_t lnp_int32vec_sprod(const int32_t *a, const int32_t *b, size_t len) {
+  size_t i;
+  __m512i f,g,s = _mm512_setzero_si512();
+
+  for(i=0;i<len;i+=16) {
+    f = _mm512_load_si512(&a[i]);
+    g = _mm512_load_si512(&b[i]);
+    s = _mm512_add_epi64(s,_mm512_mul_epi32(f,g));
+    s = _mm512_add_epi64(s,_mm512_mul_epi32(_mm512_srli_epi64(f,32),_mm512_srli_epi64(g,32)));
+  }
+  return _mm512_reduce_add_epi64(s);
 }
 
 static int64_t lnp_polzvec_sprodz(const polz *a, const polz *b, size_t len) {
@@ -428,7 +521,7 @@ void lnp_prove(lnp_proof pi, statement ost, witness owt, const statement ist, co
     size_t maxtmplen, v0off, umhat_off, umaskhatlen, yhatlen, tvv0len;
 
     polxvec wsx, y1sx, y2sx, wvx, y1vx, y2vx, u5vecx, capu5, y2sx_bak;
-    polxvec csvtildex, crsvx, capa2s, capa2v;
+    polxvec crsvx, capa2s, capa2v;
     polxvec src_sv, dst_sv; // scatter/gather views for merged-layout copies
     polxvec ck_sv, s_sv;    // views for the split A1 commitment calls
     polxvec wsy1, wvy1;
@@ -438,11 +531,13 @@ void lnp_prove(lnp_proof pi, statement ost, witness owt, const statement ist, co
     size_t s123_len, s45_len; // common sub-block lengths
     size_t ck_off; // running comkey offset within the split A1
     size_t stride, z1lo_out, z1_pos; // z1 decomposition helpers
-    polz *csvtilde;
+    poly *svpoly;
+    int32_t *y1int, *csint;
+    polz cz;
+    aes128ctr_ctx gstate;
     polz *crsv;
     uint64_t mask;
 
-    csvtilde = _aligned_alloc (64, (pp->stildelen + pp->vtildelen) * sizeof(polz));
     crsv = _aligned_alloc (64, (pp->rslen + pp->rvlen) * sizeof(polz));
 
     polz *z1;
@@ -909,12 +1004,30 @@ rej_loop1:
 
     polxvec_init_subvec2 (svcom, comkey, 0, 1, pp->rslen);
 
+    svpoly = _aligned_alloc (64, (pp->stildelen + pp->vtildelen) * sizeof(poly));
+    y1int = _aligned_alloc (64, 2 * N * (pp->stildelen + pp->vtildelen) * sizeof(int32_t));
+    csint = &y1int[N * (pp->stildelen + pp->vtildelen)];
+    off = 0;
+    for (i = 0; i < 5; i++) {
+        memcpy (&svpoly[off], iwt->s[i], iwt->n[i] * sizeof(poly));
+        off += iwt->n[i];
+    }
+    memcpy (&svpoly[off], ghat, LIFTS * LOGQ * sizeof(poly));
+    off += LIFTS * LOGQ;
+    memcpy (&svpoly[off], yhat, yhatlen * sizeof(poly));
+    off += yhatlen;
+    memcpy (&svpoly[off], umaskhat, umaskhatlen * sizeof(poly));
+    off += umaskhatlen;
+    memcpy (&svpoly[off], vtilde, pp->vtildelen * sizeof(poly));
+
 rej_loop2_outer:
     // y1: gaussian mask for stilde||vtilde
-    polzvec_gaussian(z1, pp->stildelen + pp->vtildelen, pp->logsd1, seed, nonce++);
+    aes128ctr_init (&gstate, seed, nonce++);
+    gaussian_i32 (y1int, N * (pp->stildelen + pp->vtildelen), &gstate, pp->logsd1);
 #if NOMASK == 1
-    polzvec_setzero (z1, pp->stildelen + pp->vtildelen);
+    memset (y1int, 0, N * (pp->stildelen + pp->vtildelen) * sizeof(int32_t));
 #endif
+    lnp_polzvec_fromint32 (z1, y1int, pp->stildelen + pp->vtildelen);
 
     // wsy1 = A1s_split * y1s
     polxvec_init_subvec (y1sx, tmp1x, 0, 1, pp->stildelen);
@@ -1063,15 +1176,14 @@ rej_loop2_inner:
     }
 
     // sample z1 = y1 + c*(stilde,vtilde)
-    polxvec_init_subvec (csvtildex, tmp1x, 0, 1, pp->stildelen + pp->vtildelen);
+    polz_frompolx (cz, cx);
+    polz_center (cz);
+    lnp_polyvec_chalmul (csint, cz, svpoly, pp->stildelen + pp->vtildelen);
+    for (j = 0; j < N * (pp->stildelen + pp->vtildelen); j++)
+        y1int[j] += csint[j];
 
-    polxvec_polx_mul (csvtildex, cx, svtildex);
-    polzvec_frompolxvec (csvtilde, csvtildex, 0, 1, pp->stildelen + pp->vtildelen);
-    polzvec_center (csvtilde, pp->stildelen + pp->vtildelen);
-    polzvec_add (z1, z1, csvtilde, pp->stildelen + pp->vtildelen);
-
-    sprod_zv = lnp_polzvec_sprodz (z1, csvtilde, pp->stildelen + pp->vtildelen);
-    sprod_vv = lnp_polzvec_sprodz (csvtilde, csvtilde, pp->stildelen + pp->vtildelen);
+    sprod_zv = lnp_int32vec_sprod (y1int, csint, N * (pp->stildelen + pp->vtildelen));
+    sprod_vv = lnp_int32vec_sprod (csint, csint, N * (pp->stildelen + pp->vtildelen));
     reject = is_rejected_std0(&state, sprod_zv, sprod_vv, pp->sd1 * pp->sd1, pp->capm1);
 #if !NOREJ
     if (reject) {
@@ -1079,6 +1191,7 @@ rej_loop2_inner:
         goto rej_loop2_outer;
     }
 #endif
+    lnp_polzvec_fromint32 (z1, y1int, pp->stildelen + pp->vtildelen);
 
     memcpy (ost->h, tmp_h, 16); // save hash of accepted challange
 
@@ -1304,7 +1417,8 @@ rej_loop2_inner:
     polxvec_free(rsvx);
     free(jlmat1);
     free(jlmat3);
-    free (csvtilde);
+    free (svpoly);
+    free (y1int);
     free (crsv);
     free (z1);
     free (z2);
@@ -1361,7 +1475,7 @@ static void lnp_addcheck_finalcnst (sparsecnst cfinalcnst, polx cx, const sparse
     polxvec_init_subvec2 (__t, cfinalcnst->lin->phi[0], pp->wtlen - pp->xbinlen, 1, pp->xbinlen);
     polxvec_init_subvec2 (__s, finalcnst->lin->phi[0], pp->wtlen - pp->xbinlen, 1, pp->xbinlen);
     polxvec_polx_mul (__t, cx2, __s);
-    polxvec_refresh (cfinalcnst->lin->phi[0]);
+    lnp_polxvec_refresh_nonzero (cfinalcnst->lin->phi[0]);
 
     polxvec_polx_mul (cfinalcnst->b, cx, cfinalcnst->b);
     polxvec_refresh (cfinalcnst->b);
@@ -1399,7 +1513,7 @@ static void lnp_addcheck_finalcnst (sparsecnst cfinalcnst, polx cx, const sparse
     polxvec_init_subvec2 (__t, cfinalcnst->lin->phi[0], z2_out_0, 1, pp->rslen + pp->rvlen);
     polxvec_init_subvec2 (__s, cfinalcnst->lin->phi[0], z2_out_1, 1, pp->rslen + pp->rvlen);
     polxvec_scale (__s, __t, b2);
-    polxvec_refresh (__s);
+    lnp_polxvec_refresh_nonzero (__s);
 
     // adapt verifier check to z1 split (quad terms)
     const int64_t b1 = (int64_t)1 << pp->b1;
@@ -1439,13 +1553,13 @@ static void lnp_addcheck_finalcnst (sparsecnst cfinalcnst, polx cx, const sparse
     polxvec_init_subvec2 (__t, cfinalcnst->lin->phi[0], pp->off[Z1S10], 1, z1_blk1_len);
     polxvec_init_subvec2 (__s, cfinalcnst->lin->phi[0], pp->off[Z1S11], 1, z1_blk1_len);
     polxvec_scale (__s, __t, b1);
-    polxvec_refresh (__s);
+    lnp_polxvec_refresh_nonzero (__s);
     // block 2: s4+s5+v10+v20 (contiguous in output)
     z1_blk2_len = pp->silen[3]+pp->silen[4]+pp->vtildelen;
     polxvec_init_subvec2 (__t, cfinalcnst->lin->phi[0], pp->off[Z1S40], 1, z1_blk2_len);
     polxvec_init_subvec2 (__s, cfinalcnst->lin->phi[0], pp->off[Z1S41], 1, z1_blk2_len);
     polxvec_scale (__s, __t, b1);
-    polxvec_refresh (__s);
+    lnp_polxvec_refresh_nonzero (__s);
 
     cfinalcnst->quad->len = j;
 }
