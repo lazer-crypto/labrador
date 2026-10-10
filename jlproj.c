@@ -259,8 +259,7 @@ void polyvec_jlproj_add(int32_t r[256], const poly *p, size_t len, const uint8_t
     poly_jlproj_add(r,p[i],&mat[256*N/8*i]);
 }
 
-static void jlproj_collapsmat32(int64_t *row, const uint8_t *mat, size_t len, const int64_t alpha[32]) {
-  size_t i;
+static void jlproj_collapstab(__m512i tab[16], const int64_t alpha[32]) {
   __m512i a,b,c,d;
   __m512i e,f,g,h;
   __m512i k,l,m,n;
@@ -406,42 +405,92 @@ static void jlproj_collapsmat32(int64_t *row, const uint8_t *mat, size_t len, co
   r = _mm512_permutexvar_epi64(revidx,r);  // -+++,-++-,-+-+,-+--,--++,--+-,---+,----
 #endif
 
-#define BLOCK(T0,T1)                      \
-  u = _mm512_permutex2var_epi64(T0,s,T1); \
-  v = _mm512_permutex2var_epi64(T0,t,T1); \
-  s = _mm512_srli_epi64(s,4);             \
-  t = _mm512_srli_epi64(t,4);             \
-  w = _mm512_add_epi64(w,u);              \
-  y = _mm512_add_epi64(y,v);              \
-  u = _mm512_permutex2var_epi64(T0,s,T1); \
-  v = _mm512_permutex2var_epi64(T0,t,T1); \
-  s = _mm512_srli_epi64(s,4);             \
-  t = _mm512_srli_epi64(t,4);             \
-  x = _mm512_add_epi64(x,u);              \
-  z = _mm512_add_epi64(z,v)
+  tab[ 0] = a;
+  tab[ 1] = k;
+  tab[ 2] = b;
+  tab[ 3] = l;
+  tab[ 4] = c;
+  tab[ 5] = m;
+  tab[ 6] = d;
+  tab[ 7] = n;
+  tab[ 8] = e;
+  tab[ 9] = o;
+  tab[10] = f;
+  tab[11] = p;
+  tab[12] = g;
+  tab[13] = q;
+  tab[14] = h;
+  tab[15] = r;
+}
 
-  for(i=0;i<len/32;i++) {
-    s = _mm512_load_si512((__m512i*)&mat[256*32/8*i+       0]);
-    t = _mm512_load_si512((__m512i*)&mat[256*32/8*i+256*16/8]);
-    w = _mm512_load_si512((__m512i*)&row[32*i+ 0]);
-    x = _mm512_load_si512((__m512i*)&row[32*i+ 8]);
-    y = _mm512_load_si512((__m512i*)&row[32*i+16]);
-    z = _mm512_load_si512((__m512i*)&row[32*i+24]);
-    BLOCK(a,k);
-    BLOCK(b,l);
-    BLOCK(c,m);
-    BLOCK(d,n);
-    BLOCK(e,o);
-    BLOCK(f,p);
-    BLOCK(g,q);
-    BLOCK(h,r);
-    _mm512_store_si512((__m512i*)&row[32*i+ 0],w);
-    _mm512_store_si512((__m512i*)&row[32*i+ 8],x);
-    _mm512_store_si512((__m512i*)&row[32*i+16],y);
-    _mm512_store_si512((__m512i*)&row[32*i+24],z);
+static inline __attribute__((always_inline))
+void jlproj_collapsmat16(int64_t *row, const uint8_t *mat1, const uint8_t *mat2, size_t len,
+                         const __m512i *tab, size_t nr)
+{
+  size_t i,j,k,l;
+  __m512i s,t,w[LIFTS],x[LIFTS];
+  const __m512i *tb;
+
+  for(i=0;i<len/16;i++) {
+    for(l=0;l<nr;l++)
+      w[l] = x[l] = _mm512_setzero_si512();
+    for(j=0;j<8;j++) {
+      s = _mm512_load_si512((__m512i*)&mat1[256*16/8*i+32*16/8*j]);
+      t = _mm512_load_si512((__m512i*)&mat2[256*16/8*i+32*16/8*j]);
+      for(k=0;k<8;k++) {
+        for(l=0;l<nr;l++) {
+          tb = &tab[16*(8*l+j)+2*k];
+          w[l] = _mm512_add_epi64(w[l],_mm512_permutex2var_epi64(tb[0],s,tb[1]));
+          w[l] = _mm512_add_epi64(w[l],_mm512_permutex2var_epi64(tb[0],t,tb[1]));
+        }
+        s = _mm512_srli_epi64(s,4);
+        t = _mm512_srli_epi64(t,4);
+        for(l=0;l<nr;l++) {
+          tb = &tab[16*(8*l+j)+2*k];
+          x[l] = _mm512_add_epi64(x[l],_mm512_permutex2var_epi64(tb[0],s,tb[1]));
+          x[l] = _mm512_add_epi64(x[l],_mm512_permutex2var_epi64(tb[0],t,tb[1]));
+        }
+        s = _mm512_srli_epi64(s,4);
+        t = _mm512_srli_epi64(t,4);
+      }
+    }
+    for(l=0;l<nr;l++) {
+      _mm512_store_si512((__m512i*)&row[16*N*l+16*i+0],w[l]);
+      _mm512_store_si512((__m512i*)&row[16*N*l+16*i+8],x[l]);
+    }
   }
+}
 
-#undef BLOCK
+static void jlproj_topolz(polz *r, const int64_t *row, size_t len) {
+  size_t i,j,k;
+  __m512i f,g;
+  const __m512i zero = _mm512_setzero_si512();
+  const __m512i revidx = _mm512_set_epi64(1,2,3,4,5,6,7,8);
+  const __m512i q = _mm512_set1_epi64(((int64_t)1 << LOGQ) - QOFF);
+  const __m512i hq = _mm512_set1_epi64((((int64_t)1 << LOGQ) - QOFF)/2);
+  const __m512i qoff = _mm512_set1_epi64(QOFF);
+  const __m512i mask = _mm512_set1_epi64(((uint64_t)1 << LOGQ) - 1);
+  const __m512i mask14 = _mm512_set1_epi64((1 << 14) - 1);
+
+  for(i=0;i<len;i++) {
+    for(j=0;j<N/8;j++) {
+      f = _mm512_load_si512((__m512i*)&row[N*i+N-8*j-8]);
+      g = _mm512_load_si512((__m512i*)&row[N*i+((N-8*j)&(N-1))]);
+      f = _mm512_permutex2var_epi64(f,revidx,g);
+      f = _mm512_mask_sub_epi64(f,j ? 0xFF : 0xFE,zero,f);
+      g = _mm512_srai_epi64(f,LOGQ);
+      f = _mm512_and_si512(f,mask);
+      g = _mm512_mul_epi32(g,qoff);
+      f = _mm512_add_epi64(f,g);
+      f = _mm512_mask_sub_epi64(f,_mm512_cmpgt_epi64_mask(f,hq),f,q);
+      for(k=0;k<L-1;k++) {
+        g = _mm512_and_si512(f,mask14);
+        f = _mm512_srai_epi64(f,14);
+        _mm_store_si128((__m128i*)&r[i]->limbs[k]->c[8*j],_mm512_cvtepi64_epi16(g));
+      }
+      _mm_store_si128((__m128i*)&r[i]->limbs[L-1]->c[8*j],_mm512_cvtepi64_epi16(f));
+    }
+  }
 }
 
 void jlproj_expand_challenge(int64_t alpha[256], const uint8_t buf[256*QBYTES]) {
@@ -503,69 +552,30 @@ void jlproj_expand_challenge(int64_t alpha[256], const uint8_t buf[256*QBYTES]) 
 #endif
 }
 
-void polxvec_jlproj_collapsmat(polxvec r, const uint8_t *mat, const int64_t alpha[256]) {
-  size_t i,j,k;
-  __m512i f,g;
-  const __m512i qoff = _mm512_set1_epi64(QOFF);
-  const __m512i mask = _mm512_set1_epi64(((uint64_t)1 << LOGQ) - 1);
-  const __m512i mask14 = _mm512_set1_epi64((1 << 14) - 1);
-  const __mmask32 oneinfour = _cvtu32_mask32(0x11111111);
-  alignas(64) int64_t raw[16*N];
+void polxvec_jlproj_collapsmat(polxvec *r, size_t nr, const uint8_t *mat1, const uint8_t *mat2,
+                               const int64_t *alpha)
+{
+  size_t i,j,l;
+  size_t len = r[0]->len;
+  __m512i tab[LIFTS*8*16];
+  alignas(64) int64_t raw[LIFTS*16*N];
   polz t[16];
-  size_t rpos = 0;
-  size_t len = r->len;
 
-  while(len >= 16) {
-    for(i=0;i<16*N;i++)
-      raw[i] = 0;
-    for(i=0;i<256/32;i++)
-      jlproj_collapsmat32(raw,&mat[32*16/8*i],16*N,&alpha[32*i]);
+  for(l=0;l<nr;l++)
+    for(i=0;i<8;i++)
+      jlproj_collapstab(&tab[16*(8*l+i)],&alpha[256*l+32*i]);
 
-    for(i=0;i<16;i++) {
-      for(j=0;j<N/8;j++) {
-        f = _mm512_load_si512((__m512i*)&raw[N*i+8*j]);
-        g = _mm512_srai_epi64(f,LOGQ);
-        f = _mm512_and_si512(f,mask);
-        g = _mm512_mul_epi32(g,qoff);
-        f = _mm512_add_epi64(f,g);
-        for(k=0;k<L-1;k++) {
-          g = _mm512_and_si512(f,mask14);
-          f = _mm512_srai_epi64(f,14);
-          _mm512_mask_compressstoreu_epi16(&t[i]->limbs[k]->c[8*j],oneinfour,g);
-        }
-        _mm512_mask_compressstoreu_epi16(&t[i]->limbs[L-1]->c[8*j],oneinfour,f);
-      }
+  for(i=0;i<len;i+=j) {
+    j = MIN(16,len-i);
+    if(nr == LIFTS)
+      jlproj_collapsmat16(raw,&mat1[256*N/8*i],&mat2[256*N/8*i],j*N,tab,LIFTS);
+    else
+      for(l=0;l<nr;l++)
+        jlproj_collapsmat16(&raw[16*N*l],&mat1[256*N/8*i],&mat2[256*N/8*i],j*N,&tab[128*l],1);
+    for(l=0;l<nr;l++) {
+      jlproj_topolz(t,&raw[16*N*l],j);
+      polzvec_topolxvec(r[l],t,i,1,j);
     }
-    polzvec_sigmam1(t,t,16);
-    polzvec_topolxvec(r,t,rpos,1,16);
-    rpos += 16;
-    mat += 256*16*N/8;
-    len -= 16;
-  }
-
-  if(len) {
-    for(i=0;i<len*N;i++)
-      raw[i] = 0;
-    for(i=0;i<256/32;i++)
-      jlproj_collapsmat32(raw,&mat[32*16/8*i],len*N,&alpha[32*i]);
-
-    for(i=0;i<len;i++) {
-      for(j=0;j<N/8;j++) {
-        f = _mm512_load_si512((__m512i*)&raw[N*i+8*j]);
-        g = _mm512_srai_epi64(f,LOGQ);
-        f = _mm512_and_si512(f,mask);
-        g = _mm512_mul_epi32(g,qoff);
-        f = _mm512_add_epi64(f,g);
-        for(k=0;k<L-1;k++) {
-          g = _mm512_and_si512(f,mask14);
-          f = _mm512_srai_epi64(f,14);
-          _mm512_mask_compressstoreu_epi16(&t[i]->limbs[k]->c[8*j],oneinfour,g);
-        }
-        _mm512_mask_compressstoreu_epi16(&t[i]->limbs[L-1]->c[8*j],oneinfour,f);
-      }
-    }
-    polzvec_sigmam1(t,t,len);
-    polzvec_topolxvec(r,t,rpos,1,len);
   }
 }
 

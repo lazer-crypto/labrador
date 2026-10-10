@@ -191,30 +191,25 @@ void jl_project(
   rows of the matrix jlmat.
 */
 void jl_aggregate_mat(
-  polxvec phi, 
+  polxvec *phi, 
+  size_t nphi,
   const uint8_t *jlmat1,
   const uint8_t *jlmat2, 
-  const int64_t chalz[256]
+  const int64_t *chalz
 )
 {
   size_t i;
   int64_t Q = (1ULL<<LOGQ)-QOFF;
   __attribute__((aligned(64)))
-  int64_t chalz_div2[256];
+  int64_t chalz_div2[LIFTS*256];
   __int128_t inv2 = (Q+1)/2;
-  polxvec tmp;
-  
-  polxvec_init(tmp, phi->len, 1);
 
-  for(i=0;i<256;i++){
+  assert(nphi <= LIFTS);
+  for(i=0;i<256*nphi;i++){
     chalz_div2[i] = cmodq((chalz[i] * inv2) % Q);
   }
 
-  polxvec_jlproj_collapsmat(phi, jlmat1, chalz_div2);
-  polxvec_jlproj_collapsmat(tmp, jlmat2, chalz_div2);
-  polxvec_add(phi, phi, tmp);
-
-  polxvec_free(tmp);
+  polxvec_jlproj_collapsmat(phi, nphi, jlmat1, jlmat2, chalz_div2);
 }
 
 /*

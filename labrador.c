@@ -20,24 +20,24 @@ void ldr_aggregate_zq(
 {
   size_t i, nchalz, nchalx;
   int64_t *chalz, proj;
-  polxvec chalx;
+  polxvec chalx[LIFTS], jlagg[LIFTS];
   __attribute__((aligned(64)))
   uint8_t hashbuf[64 + QBYTES*256 + 24];
+  __attribute__((aligned(64)))
+  int64_t chalz_jl[LIFTS][256];
 
   nchalz = ist->zqcnst->sparse_nchal + ist->zqcnst->int_nchal;
   nchalx =  ist->zqcnst->sigmam1_nchal;
-  chalz = _aligned_alloc(64, (256 + nchalz+64-nchalz%64) * sizeof(int64_t));
-  if(nchalx > 0){
-    polxvec_init(chalx, nchalx, 1);
-  }
+  chalz = nchalz > 0 ? _malloc(LIFTS * nchalz * sizeof(int64_t)) : NULL;
 
   for(i=0;i<LIFTS;i++){
     shake128(hashbuf, sizeof(hashbuf), h, 16);
     memcpy(h, hashbuf, 16);
-    jlproj_expand_challenge(chalz, &hashbuf[64]);
-    sample_chalz(&chalz[256], nchalz, h);
+    jlproj_expand_challenge(chalz_jl[i], &hashbuf[64]);
+    sample_chalz(&chalz[i*nchalz], nchalz, h);
     if(nchalx > 0){
-      sample_chalx_uniform(chalx, h);
+      polxvec_init(chalx[i], nchalx, 1);
+      sample_chalx_uniform(chalx[i], h);
     }
 
     sparsecnst_init(zqagg[i], 1);
@@ -46,12 +46,16 @@ void ldr_aggregate_zq(
 
     zqagg[i]->lin->off[0] = 0;
     polxvec_init(zqagg[i]->lin->phi[0], nn, 1);
+    polxvec_init_subvec2(jlagg[i], zqagg[i]->lin->phi[0], 0, 1, nn);
+  }
 
-    jl_aggregate_mat(zqagg[i]->lin->phi[0], jlmat1, jlmat2, chalz);
-    proj = jlproj_collapsproj(p, chalz);
+  jl_aggregate_mat(jlagg, LIFTS, jlmat1, jlmat2, chalz_jl[0]);
+
+  for(i=0;i<LIFTS;i++){
+    proj = jlproj_collapsproj(p, chalz_jl[i]);
     polxvec_monomial(zqagg[i]->b, 0, 0, proj);
 
-    zqcnstset_aggregate_add(zqagg[i], ist->zqcnst, &chalz[256], chalx);
+    zqcnstset_aggregate_add(zqagg[i], ist->zqcnst, &chalz[i*nchalz], chalx[i]);
 
     sparsecnst_refresh(zqagg[i]);
 
@@ -61,7 +65,9 @@ void ldr_aggregate_zq(
 
   free(chalz);
   if(nchalx > 0){
-    polxvec_free(chalx);
+    for(i=0;i<LIFTS;i++){
+      polxvec_free(chalx[i]);
+    }
   }
 }
 

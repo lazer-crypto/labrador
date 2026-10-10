@@ -2133,7 +2133,7 @@ static void lnp_projection_cnsts (
   polxvec_init (cx, 256 / N, 1);
   polxvec_init (b, 256 / N, 1);
 
-  jl_aggregate_mat (phip, jlmat3, jlmat4, chalz); // linear part corresponding to (w,t)
+  jl_aggregate_mat (&phip, 1, jlmat3, jlmat4, chalz); // linear part corresponding to (w,t)
 
   jl_aggregate_proj (phiy, ybits, chalz); // linear part corresponding to yhat (part of s6)
   polxvec_init_subvec2 (sv, phiy, ybits - 1, 1, 1); // negate part corresponding to most significant bit (required after jl_aggregate_proj)
@@ -2181,7 +2181,7 @@ static void lnp_projection_cnsts (
   chalz = _malloc(256 * sizeof(int64_t));
   sample_chalz (chalz, 256, h);
 
-  jl_aggregate_mat (phip, jlmat1, jlmat2, chalz); // linear part corresponding to si
+  jl_aggregate_mat (&phip, 1, jlmat1, jlmat2, chalz); // linear part corresponding to si
 
   polxvec_init (phiv0, pp->k[i], 1);
   jl_aggregate_proj (phiv0, pp->k[i], chalz); // linear part corresponding to v0ihat (part of xbin)
