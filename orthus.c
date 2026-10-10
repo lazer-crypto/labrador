@@ -2295,7 +2295,9 @@ void ort_prove(
   double width;
   uint64_t normsq;
   uint8_t *jlmat1, *jlmat2;
-  int32_t proj32[256];
+  int32_t proj32[256], *proj32m;
+  poly *parts[pp->r];
+  size_t lens[pp->r];
   int64_t powers[N], bufbits[7*pp->randlen*N], proj64[256], ones64[N];
   poly **diff[pp->r], *diff_one, *buf, *lifty, *sout, *rowy;
   polxvec sxf, **sxr, **sxb, *sxc, sx_sv, liftx, phi_diff, diffx, normx;
@@ -2617,6 +2619,7 @@ void ort_prove(
 
   polxvec_init(projx, 256/N, 1);
   rowy = _aligned_alloc(64, pp->m * pp->n * sizeof(poly));
+  proj32m = _malloc(256 * pp->r * sizeof(int32_t));
 
   for(i=0;i<pp->nvi;i++){
     if(!pp->isproj[i]){
@@ -2652,9 +2655,13 @@ void ort_prove(
   for(i=0;i<pp->nvdiff;i++){
     off_proj = pp->off_proj[pp->nvi+i];
     for(j=0;j<pp->r;j++){
-      jl_project(proj32, diff[j][i], pp->m * pp->n, jlmat1, jlmat2);
+      parts[j] = diff[j][i];
+      lens[j] = pp->m * pp->n;
+    }
+    jl_project_multi(proj32m, parts, lens, pp->r, jlmat1, jlmat2);
+    for(j=0;j<pp->r;j++){
       for(k=0;k<256;k++){
-        proj64[k] = proj32[k];
+        proj64[k] = proj32m[256*j+k];
       }
       polxvec_fromint64vec2(projx, proj64, 256/N, 1, 0);
       polxvec_bindec(&sout[off_proj], projx, projx->len, 
@@ -2665,6 +2672,7 @@ void ort_prove(
 
   polxvec_free(projx);
   free(rowy);
+  free(proj32m);
 
   timing_end(&time);
   timing_print(&time, 2);

@@ -196,6 +196,27 @@ void jl_project(
   polyvec_jlproj_add_bin1(r, p, len, jlmat1, jlmat2);
 }
 
+void jl_project_multi(
+  int32_t *r,
+  poly *const *p,
+  const size_t *len,
+  size_t np,
+  const uint8_t *jlmat1,
+  const uint8_t *jlmat2
+)
+{
+  size_t i;
+
+  if(np < 3){
+    for(i=0;i<np;i++){
+      jl_project(&r[256*i], p[i], len[i], jlmat1, jlmat2);
+    }
+    return;
+  }
+  memset(r, 0, 256*np*sizeof(int32_t));
+  polyvec_jlproj_add_bin1_multi(r, p, len, np, jlmat1, jlmat2);
+}
+
 /*
   The output phi is a vector of length len resulting from aggregating the 256
   rows of the matrix jlmat.

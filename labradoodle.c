@@ -546,7 +546,7 @@ void ldd_prove(
   size_t i, j, k, tpos, projpos, off, liftpos;
   size_t jlbits[pp->r], jlbits_max;
   uint8_t *jlmat1, *jlmat2;
-  int32_t proj32[256];
+  int32_t *proj32;
   int64_t proj64[256];
   int64_t bufbits[4*pp->randlen*N], chalz_jl[LIFTS][LIFTS*pp->r];
   poly *sy[pp->r], *sout;
@@ -689,15 +689,17 @@ void ldd_prove(
 
   polxvec_init(projx, 256/N, 0);
   projpos = pp->off[LAB_PROJ];
+  proj32 = _malloc(256*pp->r*sizeof(int32_t));
+  jl_project_multi(proj32, sy, pp->n, pp->r, jlmat1, jlmat2);
   for(i=0;i<pp->r;i++){
-    jl_project(proj32, sy[i], pp->n[i], jlmat1, jlmat2);
     for(j=0;j<256;j++){
-      proj64[j] = proj32[j];
+      proj64[j] = proj32[256*i+j];
     }
     polxvec_fromint64vec(projx, proj64, 256/N, 1, 0);
     polxvec_bindec(&sout[projpos], projx, projx->len, jlbits[i]);
     projpos += 256/N * jlbits[i];
   }
+  free(proj32);
   polxvec_init(sxl_jl, pp->len[LAB_PROJ], 1);
   polxvec_frompolyvec(sxl_jl, &sout[pp->off[LAB_PROJ]], 1, sxl_jl->len, 0.5);
 
