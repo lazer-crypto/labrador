@@ -211,15 +211,16 @@ static void lnp_polzvec_fromint32(polz *r, const int32_t *a, size_t len) {
   }
 }
 
-static void lnp_polyvec_chalmul(int32_t *r, const polz c, const poly *s, size_t len) {
+static int lnp_polyvec_chalmul(int32_t *r, const polz c, const poly *s, size_t len) {
   size_t i,j,k,m;
-  int64_t v;
+  int64_t v,l1;
   int32_t cv[N];
   size_t idx[N];
   __m512i f,g;
   alignas(64) int32_t b[2*N];
 
   m = 0;
+  l1 = 0;
   for(j=0;j<N;j++) {
     v = 0;
     for(k=L;k-->0;)
@@ -227,7 +228,10 @@ static void lnp_polyvec_chalmul(int32_t *r, const polz c, const poly *s, size_t 
     cv[m] = v;
     idx[m] = j;
     m += (v != 0);
+    l1 += (v < 0) ? -v : v;
   }
+  if(l1 > INT32_MAX/((int64_t)1 << 15))
+    return 0;
 
   for(i=0;i<len;i++) {
     for(j=0;j<N/16;j++) {
@@ -242,19 +246,42 @@ static void lnp_polyvec_chalmul(int32_t *r, const polz c, const poly *s, size_t 
       _mm512_store_si512(&r[N*i+16*j],g);
     }
   }
+  return 1;
 }
 
-static int64_t lnp_int32vec_sprod(const int32_t *a, const int32_t *b, size_t len) {
+static void lnp_int32vec_zsprod(int64_t *zv, int64_t *vv, const int32_t *a, const int32_t *b, size_t len) {
   size_t i;
-  __m512i f,g,s = _mm512_setzero_si512();
+  __m512i f,g,s = _mm512_setzero_si512(),t = _mm512_setzero_si512();
 
   for(i=0;i<len;i+=16) {
     f = _mm512_load_si512(&a[i]);
     g = _mm512_load_si512(&b[i]);
     s = _mm512_add_epi64(s,_mm512_mul_epi32(f,g));
     s = _mm512_add_epi64(s,_mm512_mul_epi32(_mm512_srli_epi64(f,32),_mm512_srli_epi64(g,32)));
+    t = _mm512_add_epi64(t,_mm512_mul_epi32(g,g));
+    t = _mm512_add_epi64(t,_mm512_mul_epi32(_mm512_srli_epi64(g,32),_mm512_srli_epi64(g,32)));
   }
-  return _mm512_reduce_add_epi64(s);
+  *vv = _mm512_reduce_add_epi64(t);
+  *zv = _mm512_reduce_add_epi64(s) + *vv;
+}
+
+static void lnp_polzvec_fromint32sum(polz *r, const int32_t *a, const int32_t *b, size_t len) {
+  size_t i,j,k;
+  __m512i f,g;
+  const __m512i mask14 = _mm512_set1_epi64(0x3FFF);
+
+  for(i=0;i<len;i++) {
+    for(j=0;j<N/8;j++) {
+      f = _mm512_add_epi64(_mm512_cvtepi32_epi64(_mm256_load_si256((const __m256i*)&a[N*i+8*j])),
+                           _mm512_cvtepi32_epi64(_mm256_load_si256((const __m256i*)&b[N*i+8*j])));
+      for(k=0;k<L-1;k++) {
+        g = _mm512_and_si512(f,mask14);
+        f = _mm512_srai_epi64(f,14);
+        _mm_store_si128((__m128i*)&r[i]->limbs[k]->c[8*j],_mm512_cvtepi64_epi16(g));
+      }
+      _mm_store_si128((__m128i*)&r[i]->limbs[L-1]->c[8*j],_mm512_cvtepi64_epi16(f));
+    }
+  }
 }
 
 static int64_t lnp_polzvec_sprodz(const polz *a, const polz *b, size_t len) {
@@ -521,7 +548,7 @@ void lnp_prove(lnp_proof pi, statement ost, witness owt, const statement ist, co
     size_t maxtmplen, v0off, umhat_off, umaskhatlen, yhatlen, tvv0len;
 
     polxvec wsx, y1sx, y2sx, wvx, y1vx, y2vx, u5vecx, capu5, y2sx_bak;
-    polxvec crsvx, capa2s, capa2v;
+    polxvec csvtildex, crsvx, capa2s, capa2v;
     polxvec src_sv, dst_sv; // scatter/gather views for merged-layout copies
     polxvec ck_sv, s_sv;    // views for the split A1 commitment calls
     polxvec wsy1, wvy1;
@@ -532,7 +559,9 @@ void lnp_prove(lnp_proof pi, statement ost, witness owt, const statement ist, co
     size_t ck_off; // running comkey offset within the split A1
     size_t stride, z1lo_out, z1_pos; // z1 decomposition helpers
     poly *svpoly;
+    polz *csvtilde;
     int32_t *y1int, *csint;
+    int fast;
     polz cz;
     aes128ctr_ctx gstate;
     polz *crsv;
@@ -1166,12 +1195,21 @@ rej_loop2_inner:
     // sample z1 = y1 + c*(stilde,vtilde)
     polz_frompolx (cz, cx);
     polz_center (cz);
-    lnp_polyvec_chalmul (csint, cz, svpoly, pp->stildelen + pp->vtildelen);
-    for (j = 0; j < N * (pp->stildelen + pp->vtildelen); j++)
-        y1int[j] += csint[j];
-
-    sprod_zv = lnp_int32vec_sprod (y1int, csint, N * (pp->stildelen + pp->vtildelen));
-    sprod_vv = lnp_int32vec_sprod (csint, csint, N * (pp->stildelen + pp->vtildelen));
+    fast = lnp_polyvec_chalmul (csint, cz, svpoly, pp->stildelen + pp->vtildelen);
+    if (fast) {
+        lnp_int32vec_zsprod (&sprod_zv, &sprod_vv, y1int, csint, N * (pp->stildelen + pp->vtildelen));
+    }
+    else {
+        csvtilde = _aligned_alloc (64, (pp->stildelen + pp->vtildelen) * sizeof(polz));
+        polxvec_init_subvec (csvtildex, tmp1x, 0, 1, pp->stildelen + pp->vtildelen);
+        polxvec_polx_mul (csvtildex, cx, svtildex);
+        polzvec_frompolxvec (csvtilde, csvtildex, 0, 1, pp->stildelen + pp->vtildelen);
+        polzvec_center (csvtilde, pp->stildelen + pp->vtildelen);
+        polzvec_add (z1, z1, csvtilde, pp->stildelen + pp->vtildelen);
+        sprod_zv = lnp_polzvec_sprodz (z1, csvtilde, pp->stildelen + pp->vtildelen);
+        sprod_vv = lnp_polzvec_sprodz (csvtilde, csvtilde, pp->stildelen + pp->vtildelen);
+        free (csvtilde);
+    }
     reject = is_rejected_std0(&state, sprod_zv, sprod_vv, pp->sd1 * pp->sd1, pp->capm1);
 #if !NOREJ
     if (reject) {
@@ -1179,7 +1217,8 @@ rej_loop2_inner:
         goto rej_loop2_outer;
     }
 #endif
-    lnp_polzvec_fromint32 (z1, y1int, pp->stildelen + pp->vtildelen);
+    if (fast)
+        lnp_polzvec_fromint32sum (z1, y1int, csint, pp->stildelen + pp->vtildelen);
 
     memcpy (ost->h, tmp_h, 16); // save hash of accepted challange
 
