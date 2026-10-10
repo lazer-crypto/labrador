@@ -688,7 +688,7 @@ void poly_invntt_ref(poly r, const poly a, const pdata prime) {
 void polyvec_ntt(poly *r, const poly *a, ssize_t stride_r, ssize_t stride_a, size_t len, const pdata prime) {
   size_t i = 0;
 
-  if(r == a && stride_r == stride_a)
+  if(r == a && stride_r == stride_a && stride_r != 0)
     for(;i+1<len;i+=2)
       poly_ntt2(r[stride_r*i],r[stride_r*(i+1)],a[stride_a*i],a[stride_a*(i+1)],prime,prime);
   for(;i<len;i++)
