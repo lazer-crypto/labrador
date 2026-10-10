@@ -694,120 +694,54 @@ static inline int crt_sum(__m512i r[L], const __m512i al[K], __m512i k, int cent
   return small;
 }
 
-static void crt_exact(__m512i r[L], const __m512i al[K], __m512i k) {
-  size_t i,j;
-  int bits;
-  __m512i e[L],f,ff;
-  __m512i g,h,l,c;
-  __m512i mask,qoff;
+static void crt_exact(__m512i r[][L], const __m512i al[][K], const __m512i k[], size_t n) {
+  size_t h,i,j;
+  const int16_t *e;
+  __m512i f[4],g,s,l[4][L];
+  const __m512i m14 = _mm512_set1_epi32(0x3FFF);
+  const __m512i mhi = _mm512_set1_epi32((1 << (LOGQ-28)) - 1);
+  const __m512i qoff = _mm512_set1_epi32(QOFF);
 
-  for(j=0;j<L;j++)
-    e[j] = _mm512_set1_epi16(modulus->pmq->limbs[j]);
-  f = k;
-  ff = _mm512_slli_epi16(f,2);
-  bits = LOGQ - 14*(L-1);
-  mask = _mm512_set1_epi16((1 << bits) - 1);
-  h = _mm512_mullo_epi16(f,e[L-1]);
-  g = _mm512_mulhi_epu16(f,e[L-1]);
-  c = _mm512_srli_epi16(h,bits);
-  g = _mm512_slli_epi16(g,16-bits);
-  h = _mm512_and_si512(h,mask);
-  c = _mm512_add_epi16(c,g);
-  r[L-1] = h;
-  mask = _mm512_set1_epi16(0x3FFF);
-  qoff = _mm512_set1_epi16(QOFF);
-  h = _mm512_mullo_epi16(f,e[0]);
-  l = _mm512_mullo_epi16(qoff,c);
-  qoff = _mm512_slli_epi16(qoff,2);
-  g = _mm512_mulhi_epu16(ff,e[0]);
-  c = _mm512_mulhi_epu16(qoff,c);
-  h = _mm512_and_si512(h,mask);
-  l = _mm512_and_si512(l,mask);
-  h = _mm512_add_epi16(h,l);
-  l = _mm512_srli_epi16(h,14);
-  h = _mm512_and_si512(h,mask);
-  c = _mm512_add_epi16(c,g);
-  c = _mm512_add_epi16(c,l);
-  r[0] = h;
-  for(j=1;j<L-1;j++) {
-    h = _mm512_mullo_epi16(f,e[j]);
-    g = _mm512_mulhi_epu16(ff,e[j]);
-    h = _mm512_and_si512(h,mask);
-    h = _mm512_add_epi16(h,c);
-    c = _mm512_srli_epi16(h,14);
-    h = _mm512_and_si512(h,mask);
-    c = _mm512_add_epi16(c,g);
-    r[j] = h;
-  }
-  r[L-1] = _mm512_add_epi16(r[L-1],c);
-
-  for(i=0;i<K;i++) {
+  for(h=0;h<2*n;h++)
     for(j=0;j<L;j++)
-      e[j] = _mm512_set1_epi16(modulus->xvec[i]->limbs[j]);
-    f = al[i];
-    ff = _mm512_slli_epi16(f,2);
-    bits = LOGQ - 14*(L-1);
-    mask = _mm512_set1_epi16((1 << bits) - 1);
-    h = _mm512_mullo_epi16(f,e[L-1]);
-    g = _mm512_mulhi_epu16(f,e[L-1]);
-    c = _mm512_srli_epi16(h,bits);
-    g = _mm512_slli_epi16(g,16-bits);
-    h = _mm512_and_si512(h,mask);
-    g = _mm512_add_epi16(g,c);
-    h = _mm512_add_epi16(h,r[L-1]);
-    c = _mm512_srli_epi16(h,bits);
-    h = _mm512_and_si512(h,mask);
-    c = _mm512_add_epi16(c,g);
-    r[L-1] = h;
-    mask = _mm512_set1_epi16(0x3FFF);
-    qoff = _mm512_set1_epi16(QOFF);
-    h = _mm512_mullo_epi16(f,e[0]);
-    l = _mm512_mullo_epi16(qoff,c);
-    qoff = _mm512_slli_epi16(qoff,2);
-    g = _mm512_mulhi_epu16(ff,e[0]);
-    c = _mm512_mulhi_epu16(qoff,c);
-    h = _mm512_and_si512(h,mask);
-    l = _mm512_and_si512(l,mask);
-    h = _mm512_add_epi16(h,l);
-    h = _mm512_add_epi16(h,r[0]);
-    l = _mm512_srli_epi16(h,14);
-    h = _mm512_and_si512(h,mask);
-    c = _mm512_add_epi16(c,g);
-    c = _mm512_add_epi16(c,l);
-    r[0] = h;
-    for(j=1;j<L-1;j++) {
-      h = _mm512_mullo_epi16(f,e[j]);
-      g = _mm512_mulhi_epu16(ff,e[j]);
-      h = _mm512_and_si512(h,mask);
-      h = _mm512_add_epi16(h,c);
-      h = _mm512_add_epi16(h,r[j]);
-      c = _mm512_srli_epi16(h,14);
-      h = _mm512_and_si512(h,mask);
-      c = _mm512_add_epi16(c,g);
-      r[j] = h;
+      l[h][j] = _mm512_setzero_si512();
+  for(i=0;i<=K;i++) {
+    e = i ? modulus->xvec[i-1]->limbs : modulus->pmq->limbs;
+    for(h=0;h<n;h++) {
+      g = i ? al[h][i-1] : k[h];
+      f[2*h] = _mm512_unpacklo_epi16(g,_mm512_setzero_si512());
+      f[2*h+1] = _mm512_unpackhi_epi16(g,_mm512_setzero_si512());
     }
-    r[L-1] = _mm512_add_epi16(r[L-1],c);
+    for(h=0;h<2*n;h++) {
+      s = _mm512_dpwssd_epi32(l[h][2],f[h],_mm512_set1_epi32(e[2]));
+      g = _mm512_srli_epi32(s,LOGQ-28);
+      l[h][2] = _mm512_and_si512(s,mhi);
+      s = _mm512_dpwssd_epi32(l[h][0],f[h],_mm512_set1_epi32(e[0]));
+      s = _mm512_dpwssd_epi32(s,g,qoff);
+      g = _mm512_srli_epi32(s,14);
+      l[h][0] = _mm512_and_si512(s,m14);
+      s = _mm512_dpwssd_epi32(l[h][1],f[h],_mm512_set1_epi32(e[1]));
+      s = _mm512_add_epi32(s,g);
+      g = _mm512_srli_epi32(s,14);
+      l[h][1] = _mm512_and_si512(s,m14);
+      l[h][2] = _mm512_add_epi32(l[h][2],g);
+    }
+  }
+  for(h=0;h<2*n;h++) {
+    g = _mm512_srli_epi32(l[h][2],LOGQ-28);
+    l[h][2] = _mm512_and_si512(l[h][2],mhi);
+    s = _mm512_dpwssd_epi32(l[h][0],g,qoff);
+    g = _mm512_srli_epi32(s,14);
+    l[h][0] = _mm512_and_si512(s,m14);
+    s = _mm512_add_epi32(l[h][1],g);
+    g = _mm512_srli_epi32(s,14);
+    l[h][1] = _mm512_and_si512(s,m14);
+    l[h][2] = _mm512_add_epi32(l[h][2],g);
   }
 
-  qoff = _mm512_set1_epi16(QOFF);
-  mask = _mm512_srli_epi16(mask,14*L-LOGQ);
-  g = _mm512_srai_epi16(r[L-1],LOGQ-14*(L-1));
-  r[L-1] = _mm512_and_si512(r[L-1],mask);
-  mask = _mm512_set1_epi16(0x3FFF);
-  h = _mm512_mullo_epi16(g,qoff);
-  g = _mm512_mulhi_epi16(g,_mm512_slli_epi16(qoff,2));
-  h = _mm512_and_si512(h,mask);
-  r[0] = _mm512_add_epi16(r[0],h);
-  h = _mm512_srai_epi16(r[0],14);
-  r[0] = _mm512_and_si512(r[0],mask);
-  g = _mm512_add_epi16(g,h);
-  for(j=1;j<L;j++) {
-    r[j] = _mm512_add_epi16(r[j],g);
-    if(j<L-1) {
-      g = _mm512_srai_epi16(r[j],14);
-      r[j] = _mm512_and_si512(r[j],mask);
-    }
-  }
+  for(h=0;h<n;h++)
+    for(j=0;j<L;j++)
+      r[h][j] = _mm512_packs_epi32(l[2*h][j],l[2*h+1][j]);
 }
 
 static void crtpolx(polz r, const poly *a[K], int center, const struct crtdata *c) {
@@ -828,10 +762,12 @@ static void crtpolx(polz r, const poly *a[K], int center, const struct crtdata *
     k[1] = crt_alpha(al[1],x[1],c);
     s0 = crt_sum(t[0],al[0],k[0],center,c);
     s1 = crt_sum(t[1],al[1],k[1],center,c);
-    if(s0)
-      crt_exact(t[0],al[0],k[0]);
-    if(s1)
-      crt_exact(t[1],al[1],k[1]);
+    if(s0 && s1)
+      crt_exact(t,al,k,2);
+    else if(s0)
+      crt_exact(t,al,k,1);
+    else if(s1)
+      crt_exact(&t[1],&al[1],&k[1],1);
     for(i=0;i<L;i++) {
       _mm512_store_si512(&r->limbs[i]->v[j],t[0][i]);
       _mm512_store_si512(&r->limbs[i]->v[j+1],t[1][i]);
