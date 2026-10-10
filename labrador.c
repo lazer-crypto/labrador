@@ -97,7 +97,7 @@ void ldr_aggregate_rq(
   polxvec_init(finalcnst->lin->phi[0], nn, 1);
   cnstset_aggregate(finalcnst, ist->rqcnst, (chalz) ? ist->zqcnst : NULL, 
                     (chalz) ? &chalz[256] : NULL, ldr_chalz_stride(ist), 
-                    chalx_lift, zqagg, chalx);
+                    chalx_lift, zqagg, chalx, -1);
 
   finalcnst->quad->coeffs = realloc(finalcnst->quad->coeffs, 
                                     finalcnst->quad->len*sizeof(polx));

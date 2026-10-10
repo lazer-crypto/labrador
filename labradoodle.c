@@ -137,7 +137,8 @@ static void ldd_aggregate_rq(
   uint8_t h[16]
 )
 {
-  size_t nchalx;
+  size_t i, nchalx;
+  double wmax;
   polxvec chalx, chalx_sv;
   timing time;
 
@@ -158,9 +159,13 @@ static void ldd_aggregate_rq(
 
   finalcnst->lin->off[0] = 0;
   polxvec_init(finalcnst->lin->phi[0], pp->nn, 1);
+  wmax = MAXWIDTH/(4*N*pp->r);
+  for(i=0;i<pp->r;i++){
+    wmax = MIN(wmax, MAXWIDTH/(4*(double)pp->normsq[i]));
+  }
   cnstset_aggregate(finalcnst, ist->rqcnst, ist->zqcnst, chalz_lift, 
                     ist->zqcnst->sparse_nchal + ist->zqcnst->int_nchal,
-                    chalx_lift, NULL, chalx);
+                    chalx_lift, NULL, chalx, wmax);
 
   timing_end(&time);
   timing_print(&time, 4);

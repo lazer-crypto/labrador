@@ -633,7 +633,7 @@ static void aggbuf_apply(
   polxvec out,
   aggbuf ab,
   int zero,
-  int refresh,
+  double wmax,
   const polxvec sx,
   polxvec acc
 )
@@ -641,7 +641,7 @@ static void aggbuf_apply(
   size_t i, j, lo, hi, end, z;
   aggsrc *s;
   polxvec out_sv, sx_sv, t;
-  const int full = zero || refresh;
+  const int full = zero || wmax < MAXWIDTH;
 
   lo = (full) ? 0 : out->len;
   end = (full) ? out->len : 0;
@@ -685,8 +685,11 @@ static void aggbuf_apply(
       }
     }
     polxvec_init_subvec2(out_sv, out, lo, 1, hi-lo);
-    if(refresh){
+    if(wmax < 0){
       polxvec_refresh(out_sv);
+    }
+    else if(wmax < MAXWIDTH){
+      polxvec_guard(out_sv, MAXWIDTH - wmax);
     }
     if(acc){
       polxvec_init_subvec2(sx_sv, sx, lo, 1, hi-lo);
@@ -792,7 +795,7 @@ void sparsecnst_aggregate_add(
     off += in[i]->lin->rank;
 
   }
-  aggbuf_apply(out->lin->phi[0], ab, 0, 0, NULL, NULL);
+  aggbuf_apply(out->lin->phi[0], ab, 0, MAXWIDTH, NULL, NULL);
   aggbuf_free(ab);
 }
 
@@ -973,7 +976,7 @@ void comcnst_aggregate_add(
     aggbuf_com(ab, out, chal_sv, in[i]);
     off += in[i]->rank;
   }
-  aggbuf_apply(out->lin->phi[0], ab, 0, 0, NULL, NULL);
+  aggbuf_apply(out->lin->phi[0], ab, 0, MAXWIDTH, NULL, NULL);
   aggbuf_free(ab);
 }
 
@@ -1245,7 +1248,7 @@ void rqcnstset_aggregate_add(
 
   aggbuf_init(ab);
   aggbuf_rq(ab, out, rqc, chal);
-  aggbuf_apply(out->lin->phi[0], ab, 0, 0, NULL, NULL);
+  aggbuf_apply(out->lin->phi[0], ab, 0, MAXWIDTH, NULL, NULL);
   aggbuf_free(ab);
 }
 
@@ -1690,7 +1693,7 @@ void zqcnstset_lifts_canonical(
     aggbuf_init(ab);
     aggbuf_zq_lift(ab, zqc, &chalz[l*stride], 
                    (zqc->sigmam1_nchal > 0) ? chalx[l] : NULL);
-    aggbuf_apply(agg[l]->lin->phi[0], ab, 0, 1, sxl, ev_sv);
+    aggbuf_apply(agg[l]->lin->phi[0], ab, 0, -1, sxl, ev_sv);
     aggbuf_free(ab);
 
     polxvec_sub(ev_sv, ev_sv, agg[l]->b);
@@ -1708,7 +1711,8 @@ void cnstset_aggregate(
   size_t stride,
   const polxvec *chalx,
   const sparsecnst *dense,
-  const polxvec chal
+  const polxvec chal,
+  double wmax
 )
 {
   size_t i, nrq;
@@ -1729,7 +1733,7 @@ void cnstset_aggregate(
       aggbuf_sparse(ab, out, chal_sv, dense[i]);
     }
   }
-  aggbuf_apply(out->lin->phi[0], ab, 1, 1, NULL, NULL);
+  aggbuf_apply(out->lin->phi[0], ab, 1, wmax, NULL, NULL);
   aggbuf_free(ab);
 
   for(i=0;i<out->quad->len;i++){
