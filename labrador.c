@@ -7,6 +7,8 @@
 #include "malloc.h"
 #include "fips202.h"
 
+#define LDR_LIFT_CHUNK 64
+
 static size_t ldr_chalz_stride(const statement ist){
   return (256 + ist->zqcnst->sparse_nchal + ist->zqcnst->int_nchal + 7) & ~(size_t)7;
 }
@@ -66,18 +68,27 @@ void ldr_lifts_eval(
   const polxvec sxl
 )
 {
-  size_t i;
-  polxvec t, liftx_sv;
+  size_t i, off, len;
+  polxvec t, liftx_sv, phi_sv, sx_sv;
 
   zqcnstset_lifts_eval(liftx, ist->zqcnst, &chalz[256], ldr_chalz_stride(ist),
                        chalx, sxq, sxl);
   polxvec_refresh(liftx);
 
   polxvec_init(t, 1, 1);
+  for(off=0;off<sxl->len;off+=len){
+    len = MIN(LDR_LIFT_CHUNK, sxl->len - off);
+    polxvec_init_subvec2(sx_sv, sxl, off, 1, len);
+    for(i=0;i<LIFTS;i++){
+      polxvec_init_subvec2(phi_sv, zqagg[i]->lin->phi[0], off, 1, len);
+      polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);
+      polxvec_sprod(t, phi_sv, sx_sv);
+      polxvec_add(liftx_sv, liftx_sv, t);
+    }
+  }
   for(i=0;i<LIFTS;i++){
     polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);
-    sparsecnst_eval(t, zqagg[i], sxq, sxl);
-    polxvec_add(liftx_sv, liftx_sv, t);
+    polxvec_sub(liftx_sv, liftx_sv, zqagg[i]->b);
   }
   polxvec_free(t);
 }
