@@ -154,6 +154,10 @@ static void jlproj_add64(int32_t out[256], const int16_t in[64], const uint8_t m
   r = _mm512_unpackhi_epi64(y,z);  // ++++,+++-,++-+,++--,+-++,+-+-,+--+,+---,-+++,-++-,-+-+,-+--,--++,--+-,---+,----
 
   for(i=0;i<256/32;i++) {
+    _mm_prefetch((const char*)&mat[2*256*64/8+32*16/8*i+256*16/8*0],_MM_HINT_T0);
+    _mm_prefetch((const char*)&mat[2*256*64/8+32*16/8*i+256*16/8*1],_MM_HINT_T0);
+    _mm_prefetch((const char*)&mat[2*256*64/8+32*16/8*i+256*16/8*2],_MM_HINT_T0);
+    _mm_prefetch((const char*)&mat[2*256*64/8+32*16/8*i+256*16/8*3],_MM_HINT_T0);
     s = _mm512_load_si512((__m512i*)&mat[32*16/8*i+256*16/8*0]);
     t = _mm512_load_si512((__m512i*)&mat[32*16/8*i+256*16/8*1]);
     u = _mm512_load_si512((__m512i*)&mat[32*16/8*i+256*16/8*2]);
