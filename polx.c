@@ -873,8 +873,8 @@ size_t polxvec_collaps_add_extension(polxvec c, const polxvec b, const polxvec a
     for(i=0;i<c->len;i+=deg) {
       width_a = 0;
       for(j=0;j<deg;j++)
-         width_a += a->widths[(off_a+i+j)*a->stride];
-      width_c = width_a*width_b*N/deg;
+         width_a = MAX(width_a,a->widths[(off_a+i+j)*a->stride]);
+      width_c = width_a*width_b*N;
       for(j=0;j<MIN(deg,c->len-i);j++) {
         c->widths[(i+j)*c->stride] += width_c;
         assert(c->widths[(i+j)*c->stride] <= MAXWIDTH);

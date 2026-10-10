@@ -7,68 +7,87 @@
 #include "malloc.h"
 #include "fips202.h"
 
+static size_t ldr_chalz_stride(const statement ist){
+  return (256 + ist->zqcnst->sparse_nchal + ist->zqcnst->int_nchal + 7) & ~(size_t)7;
+}
+
 void ldr_aggregate_zq(
   sparsecnst zqagg[LIFTS], 
+  int64_t **chalz,
+  polxvec chalx[LIFTS],
   const statement ist, 
   const uint8_t *jlmat1, 
   const uint8_t *jlmat2,
   const int32_t p[256], 
   size_t nn,
-  size_t r_old,
   uint8_t h[16]
 )
 {
-  size_t i, nchalz, nchalx;
-  int64_t *chalz, proj;
-  polxvec chalx;
+  size_t i, nchalz, nchalx, stride;
+  int64_t *cz, proj;
   __attribute__((aligned(64)))
   uint8_t hashbuf[64 + QBYTES*256 + 24];
 
   nchalz = ist->zqcnst->sparse_nchal + ist->zqcnst->int_nchal;
-  nchalx =  ist->zqcnst->sigmam1_nchal;
-  chalz = _aligned_alloc(64, (256 + nchalz+64-nchalz%64) * sizeof(int64_t));
-  if(nchalx > 0){
-    polxvec_init(chalx, nchalx, 1);
-  }
+  nchalx = ist->zqcnst->sigmam1_nchal;
+  stride = ldr_chalz_stride(ist);
+  *chalz = _aligned_alloc(64, LIFTS * stride * sizeof(int64_t));
 
   for(i=0;i<LIFTS;i++){
+    cz = &(*chalz)[i*stride];
     shake128(hashbuf, sizeof(hashbuf), h, 16);
     memcpy(h, hashbuf, 16);
-    jlproj_expand_challenge(chalz, &hashbuf[64]);
-    sample_chalz(&chalz[256], nchalz, h);
+    jlproj_expand_challenge(cz, &hashbuf[64]);
+    sample_chalz(&cz[256], nchalz, h);
     if(nchalx > 0){
-      sample_chalx_uniform(chalx, h);
+      polxvec_init(chalx[i], nchalx, 1);
+      sample_chalx_uniform(chalx[i], h);
     }
 
     sparsecnst_init(zqagg[i], 1);
-    quadfunc_init(zqagg[i]->quad, 0, (r_old * r_old + r_old)/2);
     linfunc_init(zqagg[i]->lin, 1, 1, 1);
 
     zqagg[i]->lin->off[0] = 0;
     polxvec_init(zqagg[i]->lin->phi[0], nn, 1);
 
-    jl_aggregate_mat(zqagg[i]->lin->phi[0], jlmat1, jlmat2, chalz);
-    proj = jlproj_collapsproj(p, chalz);
+    jl_aggregate_mat(zqagg[i]->lin->phi[0], jlmat1, jlmat2, cz);
+    proj = jlproj_collapsproj(p, cz);
     polxvec_monomial(zqagg[i]->b, 0, 0, proj);
-
-    zqcnstset_aggregate_add(zqagg[i], ist->zqcnst, &chalz[256], chalx);
-
-    sparsecnst_refresh(zqagg[i]);
-
-    zqagg[i]->quad->coeffs = realloc(zqagg[i]->quad->coeffs, 
-                                     zqagg[i]->quad->len*sizeof(polx));
   }
+}
 
-  free(chalz);
-  if(nchalx > 0){
-    polxvec_free(chalx);
+void ldr_lifts_eval(
+  polxvec liftx,
+  const sparsecnst zqagg[LIFTS],
+  const int64_t *chalz,
+  const polxvec chalx[LIFTS],
+  const statement ist,
+  const polxvec sxq[],
+  const polxvec sxl
+)
+{
+  size_t i;
+  polxvec t, liftx_sv;
+
+  zqcnstset_lifts_eval(liftx, ist->zqcnst, &chalz[256], ldr_chalz_stride(ist),
+                       chalx, sxq, sxl);
+  polxvec_refresh(liftx);
+
+  polxvec_init(t, 1, 1);
+  for(i=0;i<LIFTS;i++){
+    polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);
+    sparsecnst_eval(t, zqagg[i], sxq, sxl);
+    polxvec_add(liftx_sv, liftx_sv, t);
   }
+  polxvec_free(t);
 }
 
 void ldr_aggregate_rq(
   sparsecnst finalcnst, 
   const statement ist,
   const sparsecnst zqagg[LIFTS],
+  const int64_t *chalz,
+  const polxvec chalx_lift[LIFTS],
   size_t nn, 
   size_t r_old,
   uint8_t h[16]
@@ -93,6 +112,8 @@ void ldr_aggregate_rq(
   rqcnstset_aggregate_add(finalcnst, ist->rqcnst, chalx_sv);
 
   polxvec_init_subvec2(chalx_sv, chalx, nchalx, 1, LIFTS);
+  zqcnstset_lifts_aggregate_add(finalcnst, ist->zqcnst, &chalz[256], 
+                                ldr_chalz_stride(ist), chalx_lift, chalx_sv);
   sparsecnst_aggregate_add(finalcnst, zqagg, LIFTS, chalx_sv, NULL, 1);
 
   sparsecnst_refresh(finalcnst);
@@ -101,6 +122,17 @@ void ldr_aggregate_rq(
                                     finalcnst->quad->len*sizeof(polx));
 
   polxvec_free(chalx);
+}
+
+void ldr_lifts_free(int64_t *chalz, polxvec chalx[LIFTS], const statement ist){
+  size_t i;
+
+  if(ist->zqcnst->sigmam1_nchal > 0){
+    for(i=0;i<LIFTS;i++){
+      polxvec_free(chalx[i]);
+    }
+  }
+  free(chalz);
 }
 
 static void ldr_addcheck_commit(
@@ -222,7 +254,8 @@ void ldr_prove(
   poly *sy[pp->r], *sout;
   polx *chalx_amortize;
   polxvec sxl, sxq[pp->r], sxq_old[ist->r], phi[pp->r];
-  polxvec tx, u1x, tgd, liftx, u2x, hd, zx;
+  polxvec tx, u1x, tgd, liftx, liftx_sv, u2x, hd, zx, chalx_lift[LIFTS];
+  int64_t *chalz_lift;
   sparsecnst zqagg[LIFTS], finalcnst;
 
   // View input witness with new split
@@ -296,22 +329,25 @@ void ldr_prove(
 
   // Aggregate projections with other Zq constraints
 
-  ldr_aggregate_zq(zqagg, ist, jlmat1, jlmat2, pi->p, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_zq(zqagg, &chalz_lift, chalx_lift, ist, jlmat1, jlmat2, pi->p,
+                   pp->nn, ost->h);
 
   // Lift constraints
 
-  polxvec_init(liftx, 1, 1);
+  polxvec_init(liftx, LIFTS, 1);
+  ldr_lifts_eval(liftx, zqagg, chalz_lift, chalx_lift, ist, sxq_old, sxl);
   for(i=0;i<LIFTS;i++){
-    sparsecnst_eval(liftx, zqagg[i], sxq_old, sxl);
-    polzvec_frompolxvec(&pi->m[2][i], liftx, 0, 1, 1);
-    polxvec_add(zqagg[i]->b, zqagg[i]->b, liftx);
+    polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);
+    polzvec_frompolxvec(&pi->m[2][i], liftx_sv, 0, 1, 1);
+    polxvec_add(zqagg[i]->b, zqagg[i]->b, liftx_sv);
     polxvec_refresh(zqagg[i]->b);
   }
   update_hash_polz(ost->h, pi->m[2], LIFTS);
 
   // Aggregate Rq constraints
 
-  ldr_aggregate_rq(finalcnst, ist, zqagg, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_rq(finalcnst, ist, zqagg, chalz_lift, chalx_lift, pp->nn, 
+                   pp->r_old, ost->h);
 
   off = 0;
   for(i=0;i<pp->r;i++){
@@ -357,6 +393,7 @@ void ldr_prove(
   for(i=0;i<LIFTS;i++){
     sparsecnst_free(zqagg[i]);
   }
+  ldr_lifts_free(chalz_lift, chalx_lift, ist);
   sparsecnst_free(finalcnst);
   polxvec_free(sxl);
   polxvec_free(tx);
@@ -381,7 +418,8 @@ int ldr_reduce(
   uint8_t *jlmat1, *jlmat2, hashbuf[1024];
   int check;
   polx *chalx_amortize;
-  polxvec phi[pp->r], liftx, liftx_sv;
+  polxvec phi[pp->r], liftx, liftx_sv, chalx_lift[LIFTS];
+  int64_t *chalz_lift;
   sparsecnst zqagg[LIFTS], finalcnst;
 
   lab_statement_init(ost, ist, pp);
@@ -410,7 +448,8 @@ int ldr_reduce(
 
   // Aggregate projections with other Zq constraints
 
-  ldr_aggregate_zq(zqagg, ist, jlmat1, jlmat2, pi->p, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_zq(zqagg, &chalz_lift, chalx_lift, ist, jlmat1, jlmat2, pi->p,
+                   pp->nn, ost->h);
   free(jlmat1);
 
   // Update constraints with liftings
@@ -437,6 +476,7 @@ int ldr_reduce(
     for(i=0;i<LIFTS;i++){
       sparsecnst_free(zqagg[i]);
     }
+    ldr_lifts_free(chalz_lift, chalx_lift, ist);
     return 2;
   }
 
@@ -446,7 +486,8 @@ int ldr_reduce(
 
   // Aggregate Rq constraints
 
-  ldr_aggregate_rq(finalcnst, ist, zqagg, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_rq(finalcnst, ist, zqagg, chalz_lift, chalx_lift, pp->nn, 
+                   pp->r_old, ost->h);
 
   off = 0;
   for(i=0;i<pp->r;i++){
@@ -472,6 +513,7 @@ int ldr_reduce(
   for(i=0;i<LIFTS;i++){
     sparsecnst_free(zqagg[i]);
   }
+  ldr_lifts_free(chalz_lift, chalx_lift, ist);
   sparsecnst_free(finalcnst);
   free(chalx_amortize);
 

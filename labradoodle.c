@@ -47,7 +47,8 @@ static void ldd_collapse_jl(
 }
 
 static void ldd_aggregate_zq(
-  sparsecnst *zqagg,
+  int64_t **chalz,
+  polxvec chalx[LIFTS],
   polxvec phi_jlproj_full[LIFTS],
   const polxvec phi_jlproj[LIFTS],
   const size_t *jlbits,
@@ -58,47 +59,25 @@ static void ldd_aggregate_zq(
 )
 {
   size_t i, j, k, nchalz, nchalx, off, len;
-  int64_t *chalz;
-  polxvec chalx, phi;
+  polxvec phi;
   timing time;
 
   nchalz = ist->zqcnst->sparse_nchal + ist->zqcnst->int_nchal;
   nchalx = ist->zqcnst->sigmam1_nchal;
 
-  chalz = nchalz > 0 ? _malloc(nchalz * sizeof(int64_t)) : NULL;
-  if(nchalx > 0){
-    polxvec_init(chalx, nchalx, 1);
-  }
+  timing_start(&time, "Sample challenges");
 
+  *chalz = _malloc(MAX(LIFTS*nchalz, 1) * sizeof(int64_t));
   for(i=0;i<LIFTS;i++){
-    sparsecnst_init(zqagg[i], 1);
-    quadfunc_init(zqagg[i]->quad, 0, (pp->r_old * pp->r_old + pp->r_old)/2);
-    linfunc_init(zqagg[i]->lin, 1, 1, 1);
-
-    timing_start(&time, "Set constraint to 0s");
-
-    zqagg[i]->lin->off[0] = 0;
-    polxvec_init(zqagg[i]->lin->phi[0], pp->nn, 1);
-    polxvec_setzero(zqagg[i]->lin->phi[0], 0, 1, pp->nn);
-
-    timing_end(&time);
-    timing_print(&time, 4);
-
-    sample_chalz(chalz, nchalz, h);
+    sample_chalz(&(*chalz)[i*nchalz], nchalz, h);
     if(nchalx > 0){
-      sample_chalx_uniform(chalx, h);
+      polxvec_init(chalx[i], nchalx, 1);
+      sample_chalx_uniform(chalx[i], h);
     }
-    
-    timing_start(&time, "Aggregate input");
-
-    zqcnstset_aggregate_add(zqagg[i], ist->zqcnst, chalz, chalx);
-
-    timing_end(&time);
-    timing_print(&time, 4);
-
-    zqagg[i]->quad->coeffs = realloc(zqagg[i]->quad->coeffs, 
-                                     zqagg[i]->quad->len*sizeof(polx));
   }
+
+  timing_end(&time);
+  timing_print(&time, 4);
 
   timing_start(&time, "Aggregate phi for the projections");
 
@@ -146,11 +125,6 @@ static void ldd_aggregate_zq(
 
   timing_end(&time);
   timing_print(&time, 4);
-
-  free(chalz);
-  if(nchalx > 0){
-    polxvec_free(chalx);
-  }
 }
 
 static void ldd_aggregate_rq(
@@ -158,7 +132,8 @@ static void ldd_aggregate_rq(
   polxvec chalx_zq,
   const lab_params pp,
   const statement ist,
-  const sparsecnst zqagg[LIFTS],
+  const int64_t *chalz_lift,
+  const polxvec chalx_lift[LIFTS],
   uint8_t h[16]
 )
 {
@@ -199,7 +174,9 @@ static void ldd_aggregate_rq(
   timing_start(&time, "Aggregate Zq into Rq");
 
   polxvec_init_subvec2(chalx_sv, chalx, nchalx, 1, LIFTS);
-  sparsecnst_aggregate_add(finalcnst, zqagg, LIFTS, chalx_sv, NULL, 1);
+  zqcnstset_lifts_aggregate_add(finalcnst, ist->zqcnst, chalz_lift, 
+                                ist->zqcnst->sparse_nchal+ist->zqcnst->int_nchal,
+                                chalx_lift, chalx_sv);
 
   timing_end(&time);
   timing_print(&time, 4);
@@ -553,8 +530,9 @@ void ldd_prove(
   polxvec tx, u1x, tgd, U1, u1d, Up, projd, projx, liftx, liftd, Ub, u2x, hd;
   polxvec chalx_zq, U2, u2d, zx;
   polxvec jl_sprod_sx[LIFTS][pp->r], jlmat_agg[LIFTS], phi_jlproj[LIFTS];
-  polxvec phi_jlproj_full[LIFTS];
-  sparsecnst zqagg[LIFTS], finalcnst;
+  polxvec phi_jlproj_full[LIFTS], chalx_lift[LIFTS], liftx_sv;
+  int64_t *chalz_lift;
+  sparsecnst finalcnst;
   timing time;
 
   timing_start(&time, "Process input witness");
@@ -731,17 +709,8 @@ void ldd_prove(
 
   timing_start(&time, "Zq aggregation");
 
-  ldd_aggregate_zq(zqagg, phi_jlproj_full, phi_jlproj, jlbits, pp, ist,
-                   chalz_jl, ost->h);
-
-  timing_end(&time);
-  timing_print(&time, 3);
-
-  timing_start(&time, "Refresh aggregated Zq constraints");
-
-  for(i=0;i<LIFTS;i++){
-    sparsecnst_refresh(zqagg[i]);
-  }
+  ldd_aggregate_zq(&chalz_lift, chalx_lift, phi_jlproj_full, phi_jlproj, jlbits,
+                   pp, ist, chalz_jl, ost->h);
 
   timing_end(&time);
   timing_print(&time, 3);
@@ -767,19 +736,23 @@ void ldd_prove(
 
   timing_start(&time, "Lift constraints");
 
-  polxvec_init(liftx, 1, 1);
+  polxvec_init(liftx, LIFTS, 1);
+  zqcnstset_lifts_eval(liftx, ist->zqcnst, chalz_lift, 
+                       ist->zqcnst->sparse_nchal + ist->zqcnst->int_nchal,
+                       chalx_lift, sxq_old, sxl);
+  polxvec_refresh(liftx);
   liftpos = pp->off[LAB_LIFT];
   for(i=0;i<LIFTS;i++){
-    sparsecnst_eval(liftx, zqagg[i], sxq_old, sxl);
-    polxvec_sprod_add(liftx, phi_jlproj_full[i], sxl_jl);
+    polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);
+    polxvec_sprod_add(liftx_sv, phi_jlproj_full[i], sxl_jl);
 
     for(j=0;j<LIFTS;j++){
       for(k=0;k<pp->r;k++){
-        polxvec_scale_add(liftx, jl_sprod_sx[j][k], chalz_jl[i][j*pp->r + k]);
+        polxvec_scale_add(liftx_sv, jl_sprod_sx[j][k], chalz_jl[i][j*pp->r + k]);
       }
     }
 
-    polxvec_bindec(&sout[liftpos], liftx, liftx->len, LOGQ);
+    polxvec_bindec(&sout[liftpos], liftx_sv, 1, LOGQ);
     liftpos += LOGQ;
   }
 
@@ -808,7 +781,7 @@ void ldd_prove(
   timing_start(&time, "Rq aggregation");
 
   polxvec_init(chalx_zq, LIFTS, 1);
-  ldd_aggregate_rq(finalcnst, chalx_zq, pp, ist, zqagg, ost->h);
+  ldd_aggregate_rq(finalcnst, chalx_zq, pp, ist, chalz_lift, chalx_lift, ost->h);
 
   timing_end(&time);
   timing_print(&time, 3);
@@ -887,7 +860,9 @@ void ldd_prove(
   timing_start(&time, "Free");
 
   for(i=0;i<LIFTS;i++){
-    sparsecnst_free(zqagg[i]);
+    if(ist->zqcnst->sigmam1_nchal > 0){
+      polxvec_free(chalx_lift[i]);
+    }
     polxvec_free(jlmat_agg[i]);
     polxvec_free(phi_jlproj[i]);
     polxvec_free(phi_jlproj_full[i]);
@@ -895,6 +870,7 @@ void ldd_prove(
       polxvec_free(jl_sprod_sx[i][j]);
     }
   }
+  free(chalz_lift);
   sparsecnst_free(finalcnst);
 
   polxvec_free(sxl);
@@ -935,8 +911,9 @@ void ldd_reduce(
   int64_t chalz_jl[LIFTS][LIFTS*pp->r];
   polx *chalx_amortize;
   polxvec phi[pp->r], chalx_zq, jlmat_agg[LIFTS], phi_jlproj[LIFTS];
-  polxvec phi_jlproj_full[LIFTS];
-  sparsecnst zqagg[LIFTS], finalcnst;
+  polxvec phi_jlproj_full[LIFTS], chalx_lift[LIFTS];
+  int64_t *chalz_lift;
+  sparsecnst finalcnst;
   timing time;
 
   lab_statement_init(ost, ist, pp);
@@ -974,8 +951,8 @@ void ldd_reduce(
 
   timing_start(&time, "Zq aggregation");
 
-  ldd_aggregate_zq(zqagg, phi_jlproj_full, phi_jlproj, jlbits, pp, ist,
-                   chalz_jl, ost->h);
+  ldd_aggregate_zq(&chalz_lift, chalx_lift, phi_jlproj_full, phi_jlproj, jlbits,
+                   pp, ist, chalz_jl, ost->h);
 
   timing_end(&time);
   timing_print(&time, 3);
@@ -989,7 +966,7 @@ void ldd_reduce(
   timing_start(&time, "Rq aggregation");
 
   polxvec_init(chalx_zq, LIFTS, 1);
-  ldd_aggregate_rq(finalcnst, chalx_zq, pp, ist, zqagg, ost->h);
+  ldd_aggregate_rq(finalcnst, chalx_zq, pp, ist, chalz_lift, chalx_lift, ost->h);
 
   timing_end(&time);
   timing_print(&time, 3);
@@ -1022,11 +999,14 @@ void ldd_reduce(
   timing_start(&time, "Free");
 
   for(i=0;i<LIFTS;i++){
-    sparsecnst_free(zqagg[i]);
+    if(ist->zqcnst->sigmam1_nchal > 0){
+      polxvec_free(chalx_lift[i]);
+    }
     polxvec_free(jlmat_agg[i]);
     polxvec_free(phi_jlproj[i]);
     polxvec_free(phi_jlproj_full[i]);
   }
+  free(chalz_lift);
   sparsecnst_free(finalcnst);
 
   polxvec_free(chalx_zq);

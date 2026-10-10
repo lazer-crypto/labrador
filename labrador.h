@@ -7,13 +7,19 @@
 #include "proofsystem.h"
 #include "labrador_core.h"
 
-void ldr_aggregate_zq(sparsecnst zqagg[LIFTS], const statement ist, 
+void ldr_aggregate_zq(sparsecnst zqagg[LIFTS], int64_t **chalz, 
+                      polxvec chalx[LIFTS], const statement ist, 
                       const uint8_t *jlmat1, const uint8_t *jlmat2, 
-                      const int32_t p[256], size_t nn, size_t r_old, 
-                      uint8_t h[16]);
+                      const int32_t p[256], size_t nn, uint8_t h[16]);
+void ldr_lifts_eval(polxvec liftx, const sparsecnst zqagg[LIFTS], 
+                    const int64_t *chalz, const polxvec chalx[LIFTS], 
+                    const statement ist, const polxvec sxq[], 
+                    const polxvec sxl);
 void ldr_aggregate_rq(sparsecnst finalcnst, const statement ist, 
-                      const sparsecnst zqagg[LIFTS], size_t nn,  size_t r_old, 
-                      uint8_t h[16]);                      
+                      const sparsecnst zqagg[LIFTS], const int64_t *chalz,
+                      const polxvec chalx_lift[LIFTS], size_t nn, size_t r_old,
+                      uint8_t h[16]);
+void ldr_lifts_free(int64_t *chalz, polxvec chalx[LIFTS], const statement ist);
 
 void ldr_prove(lab_proof pi, statement ost, witness owt, const statement ist,
                const witness iwt, const lab_params pp);

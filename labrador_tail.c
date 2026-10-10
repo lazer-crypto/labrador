@@ -316,6 +316,8 @@ void ldr_tail_prove(
   poly *sy[pp->r], *sout;
   polx *chalx_amortize;
   polxvec sxl, sxq[pp->r], sxq_old[ist->r], phi[pp->r], phi_amortize, tx, liftx;
+  polxvec liftx_sv, chalx_lift[LIFTS];
+  int64_t *chalz_lift;
   sparsecnst zqagg[LIFTS], finalcnst;
 
   // View input witness with new split
@@ -374,22 +376,25 @@ void ldr_tail_prove(
 
   // Aggregate projections with other Zq constraints
 
-  ldr_aggregate_zq(zqagg, ist, jlmat1, jlmat2, pi->p, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_zq(zqagg, &chalz_lift, chalx_lift, ist, jlmat1, jlmat2, pi->p,
+                   pp->nn, ost->h);
 
   // Lift constraints
 
-  polxvec_init(liftx, 1, 1);
+  polxvec_init(liftx, LIFTS, 1);
+  ldr_lifts_eval(liftx, zqagg, chalz_lift, chalx_lift, ist, sxq_old, sxl);
   for(i=0;i<LIFTS;i++){
-    sparsecnst_eval(liftx, zqagg[i], sxq_old, sxl);
-    polzvec_frompolxvec(&pi->m[2][i], liftx, 0, 1, 1);
-    polxvec_add(zqagg[i]->b, zqagg[i]->b, liftx);
+    polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);
+    polzvec_frompolxvec(&pi->m[2][i], liftx_sv, 0, 1, 1);
+    polxvec_add(zqagg[i]->b, zqagg[i]->b, liftx_sv);
     polxvec_refresh(zqagg[i]->b);
   }
   update_hash_polz(ost->h, pi->m[2], LIFTS);
 
   // Aggregate Rq constraints
 
-  ldr_aggregate_rq(finalcnst, ist, zqagg, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_rq(finalcnst, ist, zqagg, chalz_lift, chalx_lift, pp->nn, 
+                   pp->r_old, ost->h);
 
   off = 0;
   for(i=0;i<pp->r;i++){
@@ -410,6 +415,7 @@ void ldr_tail_prove(
   for(i=0;i<LIFTS;i++){
     sparsecnst_free(zqagg[i]);
   }
+  ldr_lifts_free(chalz_lift, chalx_lift, ist);
   sparsecnst_free(finalcnst);
   polxvec_free(sxl);
   polxvec_free(tx);
@@ -429,7 +435,8 @@ int ldr_tail_reduce(
   size_t i, off;
   uint8_t *jlmat1, *jlmat2, hashbuf[1024];
   polx *chalx_amortize;
-  polxvec phi[pp->r], phi_amortize, liftx, liftx_sv;
+  polxvec phi[pp->r], phi_amortize, liftx, liftx_sv, chalx_lift[LIFTS];
+  int64_t *chalz_lift;
   sparsecnst zqagg[LIFTS], finalcnst;
   int check, ret;
 
@@ -463,7 +470,8 @@ int ldr_tail_reduce(
 
   // Aggregate projections with other Zq constraints
 
-  ldr_aggregate_zq(zqagg, ist, jlmat1, jlmat2, pi->p, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_zq(zqagg, &chalz_lift, chalx_lift, ist, jlmat1, jlmat2, pi->p,
+                   pp->nn, ost->h);
   free(jlmat1);
 
   // Update constraints with liftings
@@ -490,6 +498,7 @@ int ldr_tail_reduce(
     for(i=0;i<LIFTS;i++){
       sparsecnst_free(zqagg[i]);
     }
+    ldr_lifts_free(chalz_lift, chalx_lift, ist);
     fprintf(stderr, "ERROR in ldr_tail_reduce(): the constant coefficient of " 
                     "the liftings is not 0\n");
     return 2;
@@ -501,7 +510,8 @@ int ldr_tail_reduce(
 
   // Aggregate Rq constraints
 
-  ldr_aggregate_rq(finalcnst, ist, zqagg, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_rq(finalcnst, ist, zqagg, chalz_lift, chalx_lift, pp->nn, 
+                   pp->r_old, ost->h);
 
   off = 0;
   for(i=0;i<pp->r;i++){
@@ -528,6 +538,7 @@ int ldr_tail_reduce(
   for(i=0;i<LIFTS;i++){
     sparsecnst_free(zqagg[i]);
   }
+  ldr_lifts_free(chalz_lift, chalx_lift, ist);
   sparsecnst_free(finalcnst);
   polxvec_free(phi_amortize);
   free(chalx_amortize);
