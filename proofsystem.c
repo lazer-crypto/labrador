@@ -2,6 +2,7 @@
 #include <string.h>
 #include <assert.h>
 #include <inttypes.h>
+#include <sys/mman.h>
 #include "proofsystem.h"
 #include "polx.h"
 #include "malloc.h"
@@ -160,8 +161,17 @@ void jl_sample_mat(
 {
   uint8_t hashbuf[32];
   aes128ctr_ctx aesctx;
+  size_t bytes = 2 * len * 256 * N / 8;
+  const size_t hp = (size_t)1 << 21;
 
-  *jlmat1 = _aligned_alloc(64, 2 * len * 256 * N / 8);
+  if(bytes >= hp){
+    bytes = (bytes + hp - 1) & ~(hp - 1);
+    *jlmat1 = _aligned_alloc(hp, bytes);
+    madvise(*jlmat1, bytes, MADV_HUGEPAGE);
+  }
+  else{
+    *jlmat1 = _aligned_alloc(64, bytes);
+  }
   shake128(hashbuf, 32, h, 16);
   memcpy(h, hashbuf, 16);
   aes128ctr_init(&aesctx, &hashbuf[16], 0);
