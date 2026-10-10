@@ -554,15 +554,25 @@ static void aggbuf_apply(polxvec out, aggbuf ab, int fresh){
   }
 }
 
-static aggsrc *aggbuf_sparse(
+static aggsrc *aggbuf_lin(aggbuf ab, const polxvec c, const linfunc lin){
+  aggsrc *s;
+
+  if(lin->nparts == 0){
+    return NULL;
+  }
+  s = aggbuf_new(ab, (lin->rank == 1) ? AGG_MUL : AGG_ROT, next2power(lin->rank),
+                 c);
+  aggsrc_parts(s, lin->nparts, lin->off, lin->phi);
+  return s;
+}
+
+static void aggbuf_sparse(
   aggbuf ab,
   sparsecnst out,
   const polxvec c,
   const sparsecnst in
 )
 {
-  aggsrc *s;
-
   if(in->lin->rank == 1){
     quadfunc_polxvec_mul_add(out->quad, c, in->quad);
   }
@@ -570,13 +580,7 @@ static aggsrc *aggbuf_sparse(
   polxvec_guard(out->b, polxvec_sprod_width(c, in->b));
   polxvec_sprod_add(out->b, c, in->b);
 
-  if(in->lin->nparts == 0){
-    return NULL;
-  }
-  s = aggbuf_new(ab, (in->lin->rank == 1) ? AGG_MUL : AGG_ROT, 
-                 next2power(in->lin->rank), c);
-  aggsrc_parts(s, in->lin->nparts, in->lin->off, in->lin->phi);
-  return s;
+  aggbuf_lin(ab, c, in->lin);
 }
 
 /*
@@ -1283,13 +1287,33 @@ static void aggbuf_zq_lifts(
   const polxvec chal
 )
 {
-  size_t i, j, k, l, off, len;
+  size_t i, j, k, l, off, len, nquad;
   const int64_t *cz;
   aggsrc *s;
   polxvec gamma, cc, chal_sv, chalx_sv;
+  sparsecnst agg;
   const size_t nl = chal->len;
 
   polxvec_init(cc, 1, 1);
+
+  nquad = 0;
+  for(j=0;j<zqc->nsparse;j++){
+    nquad += zqc->sparse[j]->quad->len;
+  }
+  for(l=0;l<nl;l++){
+    sparsecnst_init(agg, 1);
+    quadfunc_init(agg->quad, 0, nquad);
+    for(j=0;j<zqc->nsparse;j++){
+      quadfunc_scale_add(agg->quad, zqc->sparse[j]->quad, chalz[l*stride + j]);
+      polxvec_guard(agg->b, (double)chalz[l*stride + j]*chalz[l*stride + j]
+                            *polxvec_maxwidth(zqc->sparse[j]->b));
+      polxvec_scale_add(agg->b, zqc->sparse[j]->b, chalz[l*stride + j]);
+    }
+    sparsecnst_refresh(agg);
+    polxvec_init_subvec2(chal_sv, chal, l, 1, 1);
+    aggbuf_sparse(ab, out, chal_sv, agg);
+    sparsecnst_free(agg);
+  }
 
   for(j=0;j<zqc->nsparse;j++){
     polxvec_init(gamma, 1, 1);
@@ -1299,8 +1323,7 @@ static void aggbuf_zq_lifts(
       polxvec_init_subvec2(chal_sv, chal, l, 1, 1);
       polxvec_scale_add(gamma, chal_sv, chalz[l*stride + j]);
     }
-    polxvec_refresh(gamma);
-    s = aggbuf_sparse(ab, out, gamma, zqc->sparse[j]);
+    s = aggbuf_lin(ab, gamma, zqc->sparse[j]->lin);
     if(s){
       s->cown = 1;
     }
