@@ -121,6 +121,60 @@ static void polzvec_topolyvec_(poly *r, const polz *a, size_t len) {
     polz_topoly_(r[i],a[i]);
 }
 
+static int lnp_polxvec_iszero_at(const polxvec r, size_t i) {
+  size_t j,k;
+  __m512i f = _mm512_setzero_si512();
+
+  for(k=0;k<K;k++)
+    for(j=0;j<N/32;j++)
+      f = _mm512_or_si512(f,_mm512_load_si512(&r->proj[k][r->stride*i]->v[j]));
+  return !_mm512_test_epi64_mask(f,f);
+}
+
+static void lnp_polxvec_refresh_nonzero(polxvec r) {
+  size_t i,j;
+  polxvec sv;
+
+  for(i=0;i<r->len;i=j) {
+    for(;i<r->len && lnp_polxvec_iszero_at(r,i);i++);
+    for(j=i;j<r->len && !lnp_polxvec_iszero_at(r,j);j++);
+    if(j > i) {
+      polxvec_init_subvec2(sv,r,i,1,j-i);
+      polxvec_refresh(sv);
+    }
+  }
+}
+
+static void lnp_sparsecnst_refresh_nonzero(sparsecnst c) {
+  size_t i;
+
+  for(i=0;i<c->quad->len;i++)
+    polx_refresh(c->quad->coeffs[i]);
+  for(i=0;i<c->lin->nparts;i++)
+    lnp_polxvec_refresh_nonzero(c->lin->phi[i]);
+  polxvec_refresh(c->b);
+}
+
+static int64_t lnp_polzvec_sprodz(const polz *a, const polz *b, size_t len) {
+  size_t i,j,k;
+  __m512i f,g,s = _mm512_setzero_si512();
+
+  for(i=0;i<len;i++) {
+    for(j=0;j<N/8;j++) {
+      f = _mm512_cvtepi16_epi64(_mm_load_si128((const __m128i*)&a[i]->limbs[L-1]->c[8*j]));
+      g = _mm512_cvtepi16_epi64(_mm_load_si128((const __m128i*)&b[i]->limbs[L-1]->c[8*j]));
+      for(k=L-1;k-->0;) {
+        f = _mm512_slli_epi64(f,14);
+        g = _mm512_slli_epi64(g,14);
+        f = _mm512_add_epi64(f,_mm512_cvtepi16_epi64(_mm_load_si128((const __m128i*)&a[i]->limbs[k]->c[8*j])));
+        g = _mm512_add_epi64(g,_mm512_cvtepi16_epi64(_mm_load_si128((const __m128i*)&b[i]->limbs[k]->c[8*j])));
+      }
+      s = _mm512_add_epi64(s,_mm512_mullo_epi64(f,g));
+    }
+  }
+  return _mm512_reduce_add_epi64(s);
+}
+
 static void comcnst_eval_(polxvec ev, const comcnst cnst, const polxvec sx);
 static void comcnst_eval_(polxvec ev, const comcnst cnst, const polxvec sx){
   size_t i, j, rank;
@@ -365,7 +419,7 @@ void lnp_prove(lnp_proof pi, statement ost, witness owt, const statement ist, co
     size_t maxtmplen, v0off, umhat_off, umaskhatlen, yhatlen, tvv0len;
 
     polxvec wsx, y1sx, y2sx, wvx, y1vx, y2vx, u5vecx, capu5, y2sx_bak;
-    polxvec z1x, z2x, csvtildex, crsvx, capa2s, capa2v;
+    polxvec csvtildex, crsvx, capa2s, capa2v;
     polxvec src_sv, dst_sv; // scatter/gather views for merged-layout copies
     polxvec ck_sv, s_sv;    // views for the split A1 commitment calls
     polxvec wsy1, wvy1;
@@ -695,7 +749,7 @@ rej_loop1:
 
     lnp_aggregate_zq (zqagg, pp, ist, jlmat1, jlmat2, jlmat3, jlmat4, zp, ost->h);
     for (i = 0; i < LIFTS; i++)
-        sparsecnst_refresh(zqagg[i]);
+        lnp_sparsecnst_refresh_nonzero(zqagg[i]);
 
     polxvec hix, sxl, sxq[NWIT], gx, phi, ppowers, m1powers, sv, yxl;
     polxvec __t;
@@ -981,20 +1035,14 @@ rej_loop2_inner:
 
     // z2 = y2 + c*(rs,rv)
     polxvec_init_subvec (crsvx, tmp1x, 0, 1, pp->rslen + pp->rvlen);
-    polxvec_init_subvec (z2x, tmp2x, 0, 1, pp->rslen + pp->rvlen);
 
     polxvec_polx_mul (crsvx, cx, rsvx);
-    polxvec_refresh (crsvx);
-    polzvec_topolxvec (z2x, z2, 0, 1, pp->rslen + pp->rvlen);
-    polxvec_add (z2x, z2x, crsvx);
-
     polzvec_frompolxvec (crsv, crsvx, 0, 1, pp->rslen + pp->rvlen);
     polzvec_center (crsv, pp->rslen + pp->rvlen);
-    polzvec_frompolxvec (z2, z2x, 0, 1, pp->rslen + pp->rvlen);
-    polzvec_center (z2, pp->rslen + pp->rvlen);
+    polzvec_add (z2, z2, crsv, pp->rslen + pp->rvlen);
 
-    sprod_zv = polzvec_sprodz (z2, crsv, pp->rslen + pp->rvlen);
-    sprod_vv = polzvec_sprodz (crsv, crsv, pp->rslen + pp->rvlen);
+    sprod_zv = lnp_polzvec_sprodz (z2, crsv, pp->rslen + pp->rvlen);
+    sprod_vv = lnp_polzvec_sprodz (crsv, crsv, pp->rslen + pp->rvlen);
     if (is_rejected_sgnleak0(&state, sprod_zv, sprod_vv, pp->sd2 * pp->sd2, pp->capm2)) {
 #if !NOREJ
         // printf("z2 rejected: <v,v>=%ld <z,pv>=%ld\n", sprod_vv, sprod_zv);
@@ -1004,20 +1052,14 @@ rej_loop2_inner:
 
     // sample z1 = y1 + c*(stilde,vtilde)
     polxvec_init_subvec (csvtildex, tmp1x, 0, 1, pp->stildelen + pp->vtildelen);
-    polxvec_init_subvec (z1x, tmp2x, 0, 1, pp->stildelen + pp->vtildelen);
 
     polxvec_polx_mul (csvtildex, cx, svtildex);
-    polxvec_refresh (csvtildex);
-    polzvec_topolxvec (z1x, z1, 0, 1, pp->stildelen + pp->vtildelen);
-    polxvec_add (z1x, z1x, csvtildex);
-
     polzvec_frompolxvec (csvtilde, csvtildex, 0, 1, pp->stildelen + pp->vtildelen);
     polzvec_center (csvtilde, pp->stildelen + pp->vtildelen);
-    polzvec_frompolxvec (z1, z1x, 0, 1, pp->stildelen + pp->vtildelen);
-    polzvec_center (z1, pp->stildelen + pp->vtildelen);
+    polzvec_add (z1, z1, csvtilde, pp->stildelen + pp->vtildelen);
 
-    sprod_zv = polzvec_sprodz (z1, csvtilde, pp->stildelen + pp->vtildelen);
-    sprod_vv = polzvec_sprodz (csvtilde, csvtilde, pp->stildelen + pp->vtildelen);
+    sprod_zv = lnp_polzvec_sprodz (z1, csvtilde, pp->stildelen + pp->vtildelen);
+    sprod_vv = lnp_polzvec_sprodz (csvtilde, csvtilde, pp->stildelen + pp->vtildelen);
     reject = is_rejected_std0(&state, sprod_zv, sprod_vv, pp->sd1 * pp->sd1, pp->capm1);
 #if !NOREJ
     if (reject) {
@@ -1277,6 +1319,7 @@ static void lnp_addcheck_finalcnst (sparsecnst cfinalcnst, polx cx, const sparse
     size_t i, j, row, col;
     size_t z1_blk1_len, z1_blk2_len;
     polx *aij;
+    polx cx2;
 
     polxvec_init_subvec2 (svcom, comkey, 0, 1, pp->rslen);
 
@@ -1289,22 +1332,22 @@ static void lnp_addcheck_finalcnst (sparsecnst cfinalcnst, polx cx, const sparse
 
     // phi[0] already matches the output layout because sxl uses merged layout
     // and ist positions were translated on the fly during aggregation.
-    polxvec_polx_mul (cfinalcnst->lin->phi[0], cx, cfinalcnst->lin->phi[0]);
-    polxvec_refresh (cfinalcnst->lin->phi[0]);
-    polxvec_init_subvec2 (__t, cfinalcnst->lin->phi[0], pp->wtlen - pp->xbinlen, 1, pp->xbinlen);
+    polx_mul (cx2, cx, cx);
+    polxvec_init_subvec2 (__t, cfinalcnst->lin->phi[0], 0, 1, pp->wtlen - pp->xbinlen);
     polxvec_polx_mul (__t, cx, __t);
-    polxvec_refresh (__t);
+    polxvec_init_subvec2 (__t, cfinalcnst->lin->phi[0], pp->wtlen - pp->xbinlen, 1, pp->xbinlen);
+    polxvec_polx_mul (__t, cx2, __t);
+    polxvec_refresh (cfinalcnst->lin->phi[0]);
 
     polxvec_polx_mul (cfinalcnst->b, cx, cfinalcnst->b);
     polxvec_refresh (cfinalcnst->b);
     polxvec_polx_mul (cfinalcnst->b, cx, cfinalcnst->b);
     polxvec_refresh (cfinalcnst->b);
-
-    sparsecnst_refresh (cfinalcnst);
 
     polxvec powers;
     polxvec_init (powers, LOGQ, 1);
     polxvec_powers (powers, 2, -1, 1); // -G2
+    polxvec_refresh (powers);
 
     // z2s output position: within Z1LO after s3+s6
     size_t z2s_out = pp->off[Z1LO] + pp->silen[2] + pp->silen[5];
@@ -1381,7 +1424,6 @@ static void lnp_addcheck_finalcnst (sparsecnst cfinalcnst, polx cx, const sparse
     polxvec_refresh (__s);
 
     cfinalcnst->quad->len = j;
-    sparsecnst_refresh (cfinalcnst);
 }
 
 static void lnp_addchecks(statement ost, const lnp_params pp, const lnp_proof pi,
@@ -2234,7 +2276,11 @@ static void lnp_projection_cnsts (
   lnpzq->sparse[2 + i]->lin->off[4] = pp->off[Z1V10] + i; // w[i] within v10
   polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[4], phiw);
 
-  sparsecnst_refresh (lnpzq->sparse[2 + i]);
+  polxvec_refresh (lnpzq->sparse[2 + i]->lin->phi[0]);
+  polxvec_refresh (lnpzq->sparse[2 + i]->lin->phi[2]);
+  polxvec_refresh (lnpzq->sparse[2 + i]->lin->phi[3]);
+  polxvec_refresh (lnpzq->sparse[2 + i]->lin->phi[4]);
+  polxvec_refresh (lnpzq->sparse[2 + i]->b);
 
   v0off += pp->v0ihatlen[i];
   umoff += pp->k[i] * 256 / N;
@@ -2455,7 +2501,7 @@ static void lnp_aggregate_rq(
   polxvec_init_subvec2 (chalx_sv, chalx, nchalx, 1, LIFTS);
   sparsecnst_aggregate_add (finalcnst, zqagg, LIFTS, chalx_sv, NULL, 1);
 
-  sparsecnst_refresh (finalcnst);
+  lnp_sparsecnst_refresh_nonzero (finalcnst);
 
   polxvec_free (chalx);
 }
