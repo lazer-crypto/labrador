@@ -429,6 +429,7 @@ void polxvec_rotation_aggregate_add(
 #define AGG_ROT 1
 #define AGG_OUTER 2
 #define AGG_SUB 3
+#define AGG_ADD 4
 #define AGG_TILE 32
 
 typedef struct {
@@ -549,7 +550,7 @@ static void aggsrc_inc(aggsrc *s){
     s->ws = MAX(s->ws, polxvec_maxwidth(src_sv));
   }
   s->wc = 0;
-  if(s->type == AGG_SUB){
+  if(s->type == AGG_SUB || s->type == AGG_ADD){
     return;
   }
   for(j=0;j<s->c->len;j++){
@@ -607,16 +608,20 @@ static void aggsrc_apply(polxvec out, const aggsrc *s, size_t j, size_t lo, size
     return;
   }
   polxvec_init_subvec2(out_sv, out, o + a, 1, b-a);
-  if(s->type == AGG_SUB){
+  if(s->type == AGG_SUB || s->type == AGG_ADD){
     if(s->ws > MAXWIDTH - WUNIF){
       polxvec_refreshed(c_sv, src_sv);
-      polxvec_guard(out_sv, WUNIF);
-      polxvec_sub(out_sv, out_sv, c_sv);
-      polxvec_free(c_sv);
+      polxvec_init_subvec2(src_sv, c_sv, 0, 1, b-a);
+    }
+    polxvec_guard(out_sv, (s->ws > MAXWIDTH - WUNIF) ? WUNIF : s->ws);
+    if(s->type == AGG_SUB){
+      polxvec_sub(out_sv, out_sv, src_sv);
     }
     else{
-      polxvec_guard(out_sv, s->ws);
-      polxvec_sub(out_sv, out_sv, src_sv);
+      polxvec_add(out_sv, out_sv, src_sv);
+    }
+    if(s->ws > MAXWIDTH - WUNIF){
+      polxvec_free(c_sv);
     }
   }
   else{
@@ -624,13 +629,22 @@ static void aggsrc_apply(polxvec out, const aggsrc *s, size_t j, size_t lo, size
   }
 }
 
-static void aggbuf_apply(polxvec out, aggbuf ab, int fresh){
+static void aggbuf_apply(
+  polxvec out,
+  aggbuf ab,
+  int zero,
+  int refresh,
+  const polxvec sx,
+  polxvec acc
+)
+{
   size_t i, j, lo, hi, end, z;
   aggsrc *s;
-  polxvec out_sv;
+  polxvec out_sv, sx_sv, t;
+  const int full = zero || refresh;
 
-  lo = (fresh) ? 0 : out->len;
-  end = (fresh) ? out->len : 0;
+  lo = (full) ? 0 : out->len;
+  end = (full) ? out->len : 0;
   for(i=0;i<ab->n;i++){
     s = ab->src[i];
     aggsrc_inc(s);
@@ -642,7 +656,7 @@ static void aggbuf_apply(polxvec out, aggbuf ab, int fresh){
       end = MAX(end, aggsrc_last(s, j) + 1);
     }
   }
-  if(!fresh && ab->n == 1){
+  if(!full && ab->n == 1){
     s = ab->src[0];
     for(j=0;j<s->n;j++){
       aggsrc_apply(out, s, j, s->off[j], out->len);
@@ -651,10 +665,13 @@ static void aggbuf_apply(polxvec out, aggbuf ab, int fresh){
   }
   lo &= ~(size_t)(AGG_TILE-1);
 
+  if(acc){
+    polxvec_init(t, 1, 1);
+  }
   z = lo;
   for(;lo<end;lo=hi){
     hi = MIN(end, lo + AGG_TILE);
-    if(fresh && z < MIN(out->len, hi + ab->spill)){
+    if(zero && z < MIN(out->len, hi + ab->spill)){
       polxvec_setzero(out, z, 1, MIN(out->len, hi + ab->spill) - z);
       z = MIN(out->len, hi + ab->spill);
     }
@@ -667,10 +684,18 @@ static void aggbuf_apply(polxvec out, aggbuf ab, int fresh){
         s->cur++;
       }
     }
-    if(fresh){
-      polxvec_init_subvec2(out_sv, out, lo, 1, hi-lo);
+    polxvec_init_subvec2(out_sv, out, lo, 1, hi-lo);
+    if(refresh){
       polxvec_refresh(out_sv);
     }
+    if(acc){
+      polxvec_init_subvec2(sx_sv, sx, lo, 1, hi-lo);
+      polxvec_sprod(t, out_sv, sx_sv);
+      polxvec_add(acc, acc, t);
+    }
+  }
+  if(acc){
+    polxvec_free(t);
   }
 }
 
@@ -767,7 +792,7 @@ void sparsecnst_aggregate_add(
     off += in[i]->lin->rank;
 
   }
-  aggbuf_apply(out->lin->phi[0], ab, 0);
+  aggbuf_apply(out->lin->phi[0], ab, 0, 0, NULL, NULL);
   aggbuf_free(ab);
 }
 
@@ -948,7 +973,7 @@ void comcnst_aggregate_add(
     aggbuf_com(ab, out, chal_sv, in[i]);
     off += in[i]->rank;
   }
-  aggbuf_apply(out->lin->phi[0], ab, 0);
+  aggbuf_apply(out->lin->phi[0], ab, 0, 0, NULL, NULL);
   aggbuf_free(ab);
 }
 
@@ -1220,7 +1245,7 @@ void rqcnstset_aggregate_add(
 
   aggbuf_init(ab);
   aggbuf_rq(ab, out, rqc, chal);
-  aggbuf_apply(out->lin->phi[0], ab, 0);
+  aggbuf_apply(out->lin->phi[0], ab, 0, 0, NULL, NULL);
   aggbuf_free(ab);
 }
 
@@ -1538,6 +1563,139 @@ static void aggbuf_zq_lifts(
   polxvec_free(cc);
 }
 
+static void aggbuf_zq_lift(
+  aggbuf ab,
+  const zqcnstset zqc,
+  const int64_t *chalz,
+  const polxvec chalx
+)
+{
+  size_t i, j, k, m, off, len;
+  size_t *offs;
+  const int64_t *cz;
+  aggsrc *s;
+  polxvec c, chalx_sv, *parts;
+
+  for(j=0;j<zqc->nsparse;j++){
+    if(zqc->sparse[j]->lin->nparts == 0){
+      continue;
+    }
+    polxvec_init(c, 1, 1);
+    polxvec_monomial(c, 0, 0, chalz[j]);
+    s = aggbuf_lin(ab, c, zqc->sparse[j]->lin);
+    s->cown = 1;
+  }
+
+  off = 0;
+  for(j=0;j<zqc->nsigmam1;j++){
+    len = zqc->sigmam1[j]->len;
+    if(len == 0){
+      continue;
+    }
+    polxvec_init_subvec2(chalx_sv, chalx, off, 1, len);
+    s = aggbuf_new(ab, AGG_ADD, 1, NULL);
+    polxvec_init_subvec2(s->part, chalx, off, 1, len);
+    s->poff = zqc->sigmam1[j]->off2;
+    s = aggbuf_new(ab, AGG_SUB, 1, NULL);
+    polxvec_init(s->part, len, 1);
+    s->pown = 1;
+    s->poff = zqc->sigmam1[j]->off1;
+    if(zqc->sigmam1[j]->mul){
+      polxvec_mul(s->part, zqc->sigmam1[j]->c, chalx_sv);
+    }
+    else{
+      polxvec_copy(s->part, chalx_sv);
+    }
+    polxvec_sigmam1(s->part, s->part);
+    off += len;
+  }
+
+  len = 0;
+  for(i=0;i<zqc->nint;i++){
+    len += zqc->intc[i]->rank;
+  }
+  if(len > 0){
+    cz = &chalz[zqc->sparse_nchal];
+    s = aggbuf_new(ab, AGG_ADD, 1, NULL);
+    polxvec_init(s->part, len, 1);
+    s->pown = 1;
+    s->mem = _malloc(len*(sizeof(size_t) + sizeof(polxvec)));
+    offs = s->mem;
+    parts = (polxvec *)&offs[len];
+    m = 0;
+    for(i=0;i<zqc->nint;i++){
+      for(k=0;k<zqc->intc[i]->rank;k++){
+        offs[m] = zqc->intc[i]->off + k;
+        polxvec_init_subvec2(parts[m], s->part, m, 1, 1);
+        intcnst_phi(parts[m], cz, k);
+        cz += (k == 0) ? N-1 : N;
+        m++;
+      }
+    }
+    aggsrc_parts(s, len, offs, parts);
+  }
+}
+
+void zqcnstset_lifts_canonical(
+  polxvec ev,
+  sparsecnst *agg,
+  const zqcnstset zqc,
+  const int64_t *chalz,
+  size_t stride,
+  const polxvec *chalx,
+  const polxvec sxq[],
+  const polxvec sxl
+)
+{
+  size_t i, j, l, ne, ng;
+  size_t (*gidx)[2];
+  int64_t s;
+  polxvec gram, ev_sv;
+  aggbuf ab;
+  const size_t nl = ev->len;
+
+  ne = 0;
+  for(j=0;j<zqc->nsparse;j++){
+    ne += zqc->sparse[j]->quad->len;
+  }
+  gidx = _malloc(MAX(ne, 1)*sizeof(*gidx));
+  polxvec_init(gram, MAX(ne, 1), 1);
+  ng = 0;
+
+  for(l=0;l<nl;l++){
+    quadfunc_free(agg[l]->quad);
+    quadfunc_init(agg[l]->quad, 0, ne);
+    for(j=0;j<zqc->nsparse;j++){
+      s = chalz[l*stride + j];
+      quadfunc_scale_add(agg[l]->quad, zqc->sparse[j]->quad, s);
+      polxvec_guard(agg[l]->b, (double)s*s*polxvec_maxwidth(zqc->sparse[j]->b));
+      polxvec_scale_add(agg[l]->b, zqc->sparse[j]->b, s);
+    }
+    for(i=0;i<agg[l]->quad->len;i++){
+      polx_refresh(agg[l]->quad->coeffs[i]);
+    }
+    polxvec_refresh(agg[l]->b);
+
+    polxvec_init_subvec2(ev_sv, ev, l, 1, 1);
+    polxvec_setzero(ev_sv, 0, 1, 1);
+    if(agg[l]->quad->len > 0){
+      quadfunc_eval_gram_add(ev_sv, agg[l]->quad, sxq, gram, gidx, &ng);
+      polxvec_refresh(ev_sv);
+    }
+
+    aggbuf_init(ab);
+    aggbuf_zq_lift(ab, zqc, &chalz[l*stride], 
+                   (zqc->sigmam1_nchal > 0) ? chalx[l] : NULL);
+    aggbuf_apply(agg[l]->lin->phi[0], ab, 0, 1, sxl, ev_sv);
+    aggbuf_free(ab);
+
+    polxvec_sub(ev_sv, ev_sv, agg[l]->b);
+  }
+
+  free(gidx);
+  polxvec_free(gram);
+}
+
 void cnstset_aggregate(
   sparsecnst out,
   const rqcnstset rqc,
@@ -1567,7 +1725,7 @@ void cnstset_aggregate(
       aggbuf_sparse(ab, out, chal_sv, dense[i]);
     }
   }
-  aggbuf_apply(out->lin->phi[0], ab, 1);
+  aggbuf_apply(out->lin->phi[0], ab, 1, 1, NULL, NULL);
   aggbuf_free(ab);
 
   for(i=0;i<out->quad->len;i++){

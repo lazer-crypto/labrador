@@ -214,6 +214,10 @@ void cnstset_aggregate(sparsecnst out, const rqcnstset rqc,
                        const zqcnstset zqc, const int64_t *chalz, size_t stride,
                        const polxvec *chalx, const sparsecnst *dense, 
                        const polxvec chal);
+void zqcnstset_lifts_canonical(polxvec ev, sparsecnst *agg, const zqcnstset zqc,
+                               const int64_t *chalz, size_t stride,
+                               const polxvec *chalx, const polxvec sxq[],
+                               const polxvec sxl);
 void zqcnstset_lifts_eval(polxvec ev, const zqcnstset zqc, const int64_t *chalz,
                           size_t stride, const polxvec *chalx, 
                           const polxvec sxq[], const polxvec sxl);

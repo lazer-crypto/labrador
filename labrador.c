@@ -66,22 +66,8 @@ void ldr_lifts_eval(
   const polxvec sxl
 )
 {
-  size_t i, nquad;
-  polxvec liftx_sv;
-
-  nquad = 0;
-  for(i=0;i<ist->zqcnst->nsparse;i++){
-    nquad += ist->zqcnst->sparse[i]->quad->len;
-  }
-  for(i=0;i<LIFTS;i++){
-    quadfunc_free(zqagg[i]->quad);
-    quadfunc_init(zqagg[i]->quad, 0, nquad);
-    zqcnstset_aggregate_add(zqagg[i], ist->zqcnst, 
-                            &chalz[i*ldr_chalz_stride(ist) + 256], chalx[i]);
-    sparsecnst_refresh(zqagg[i]);
-    polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);
-    sparsecnst_eval(liftx_sv, zqagg[i], sxq, sxl);
-  }
+  zqcnstset_lifts_canonical(liftx, zqagg, ist->zqcnst, &chalz[256], 
+                            ldr_chalz_stride(ist), chalx, sxq, sxl);
 }
 
 void ldr_aggregate_rq(
