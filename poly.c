@@ -1534,20 +1534,20 @@ static __m512i sprod_pairs_table(const pdata prime) {
   int32_t t[16];
 
   for(i=0;i<16;i++) {
-    c = ((int64_t)((i < 8) ? i : i-16) << 28) + ((int64_t)1 << 27);
+    c = ((int64_t)i - ((i < 8) ? 0 : 16))*((int64_t)1 << 28) + ((int64_t)1 << 27);
     t[i] = c - modp(c,prime);
   }
   return _mm512_load_si512(t);
 }
 
-static __m512i *sprod_pairs_core(const poly **a, const poly **b, const size_t *la, const size_t *lb, size_t ra,
-                                 size_t rb, ssize_t stride_a, ssize_t stride_b, const pdata prime)
+static __m512i *sprod_pairs_core(const poly **a, const poly **b, const size_t *la, const size_t *lb,
+                                 const ssize_t *sta, const ssize_t *stb, size_t ra, size_t rb, __m512i tab,
+                                 const pdata prime)
 {
   size_t i,j,k,l,na,nb,s,sb,sm,len;
   __m512i *z, *ta, *tb;
   const int64_t bnd = (prime->p >> 1) + 16;
   const size_t nt = (b) ? ra+rb : ra;
-  const __m512i tab = sprod_pairs_table(prime);
 
   len = (b) ? MAX(la[0],lb[0]) : la[0];
   s = ((((int64_t)1 << 31) - 1 - ((int64_t)1 << 27) - prime->p)/(2*bnd*bnd));
@@ -1566,9 +1566,9 @@ static __m512i *sprod_pairs_core(const poly **a, const poly **b, const size_t *l
     while(b && nb && lb[nb-1] <= l)
       nb -= 1;
     for(i=0;i<na;i++)
-      sprod_pairs_pack(&ta[i*sb*(N/16)],&a[i][stride_a*l],stride_a,la[i]-l,sb,prime);
+      sprod_pairs_pack(&ta[i*sb*(N/16)],&a[i][sta[i]*l],sta[i],la[i]-l,sb,prime);
     for(j=0;b && j<nb;j++)
-      sprod_pairs_pack(&tb[j*sb*(N/16)],&b[j][stride_b*l],stride_b,lb[j]-l,sb,prime);
+      sprod_pairs_pack(&tb[j*sb*(N/16)],&b[j][stb[j]*l],stb[j],lb[j]-l,sb,prime);
     if(!b) {
       tb = ta;
       nb = na;
@@ -1621,24 +1621,38 @@ static void sprod_pairs_sort(size_t *o, size_t *q, const size_t *len, size_t r) 
 }
 
 void polyvec_sprod_pairs(poly *g, ssize_t stride_g, const poly **a, const poly **b, const size_t *la,
-                         const size_t *lb, ssize_t stride, size_t r, const pdata prime)
+                         const size_t *lb, const ssize_t *sta, const ssize_t *stb, size_t r, const pdata prime)
 {
   size_t i,j,l,u,v;
-  size_t oa[r], qa[r], ob[r], qb[r], ma[r], mb[r];
-  const poly *pa[r], *pb[r];
+  size_t *oa, *qa, *ob, *qb, *ma, *mb;
+  ssize_t *ka, *kb;
+  const poly **pa, **pb;
   __m512i *z;
 
   if(!r)
     return;
+  oa = _malloc(r*(6*sizeof(size_t) + 2*sizeof(ssize_t) + 2*sizeof(poly*)));
+  qa = &oa[r];
+  ob = &qa[r];
+  qb = &ob[r];
+  ma = &qb[r];
+  mb = &ma[r];
+  ka = (ssize_t*)&mb[r];
+  kb = &ka[r];
+  pa = (const poly**)&kb[r];
+  pb = &pa[r];
+
   sprod_pairs_sort(oa,qa,la,r);
   sprod_pairs_sort(ob,qb,(b) ? lb : la,r);
   for(i=0;i<r;i++) {
     pa[i] = a[oa[i]];
     ma[i] = la[oa[i]];
+    ka[i] = sta[oa[i]];
     pb[i] = (b) ? b[ob[i]] : pa[i];
     mb[i] = (b) ? lb[ob[i]] : ma[i];
+    kb[i] = (b) ? stb[ob[i]] : ka[i];
   }
-  z = sprod_pairs_core(pa,(b) ? pb : NULL,ma,mb,r,r,stride,stride,prime);
+  z = sprod_pairs_core(pa,(b) ? pb : NULL,ma,mb,ka,kb,r,r,sprod_pairs_table(prime),prime);
 
   l = 0;
   for(i=0;i<r;i++) {
@@ -1655,27 +1669,37 @@ void polyvec_sprod_pairs(poly *g, ssize_t stride_g, const poly **a, const poly *
   }
 
   free(z);
+  free(oa);
 }
 
 void polyvec_sprod_extension_blocked(poly *c, const poly *a, const poly *b, ssize_t stride_c, ssize_t stride_a,
                                      ssize_t stride_b, size_t deg, size_t clen, size_t blen, const pdata prime)
 {
   size_t i,j,k,t;
-  size_t la[deg], lb[deg];
-  const poly *pa[deg], *pb[deg];
-  __m512i *z, f[2][N/16];
+  size_t *la, *lb;
+  ssize_t *sa, *sb;
+  const poly **pa, **pb;
+  __m512i *z, f[2][N/16], tab;
   poly x, h;
-  const __m512i tab = sprod_pairs_table(prime);
 
-  if(!clen)
+  if(!clen || !deg)
     return;
+  la = _malloc(deg*(2*sizeof(size_t) + 2*sizeof(ssize_t) + 2*sizeof(poly*)));
+  lb = &la[deg];
+  sa = (ssize_t*)&lb[deg];
+  sb = &sa[deg];
+  pa = (const poly**)&sb[deg];
+  pb = &pa[deg];
   for(i=0;i<deg;i++) {
-    pa[i] = &a[stride_a*i];
-    pb[i] = &b[stride_b*i];
     la[i] = (blen+deg-1)/deg;
     lb[i] = (blen > i) ? (blen-i+deg-1)/deg : 0;
+    pa[i] = (la[i]) ? &a[stride_a*i] : a;
+    pb[i] = (lb[i]) ? &b[stride_b*i] : b;
+    sa[i] = stride_a*deg;
+    sb[i] = stride_b*deg;
   }
-  z = sprod_pairs_core(pa,pb,la,lb,deg,deg,stride_a*deg,stride_b*deg,prime);
+  tab = sprod_pairs_table(prime);
+  z = sprod_pairs_core(pa,pb,la,lb,sa,sb,deg,deg,tab,prime);
 
   poly_monomial_ntt(x,1,1,prime);
   for(t=0;t<clen;t++) {
@@ -1693,6 +1717,7 @@ void polyvec_sprod_extension_blocked(poly *c, const poly *a, const poly *b, ssiz
   }
 
   free(z);
+  free(la);
 }
 
 void poly_scale(poly r, const poly a, int16_t s, const pdata prime) {

@@ -258,6 +258,8 @@ static void ldd_ling(
   polxvec hx, hx_sv, acc;
   size_t i, j, hpos = 0;
 
+  if(!r)
+    return;
   polxvec_init(hx, (r*r+r)/2, 1);
   polxvec_init(acc, 1, 1);
 

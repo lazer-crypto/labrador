@@ -705,6 +705,8 @@ void lab_quadg(
   size_t i;
   const size_t m = (r*r+r)/2;
 
+  if(!r)
+    return;
   polxvec_init(gx, m, 1);
   polxvec_sprod_pairs(gx, sx, NULL, r);
   if(tail){
@@ -740,6 +742,8 @@ void lab_ling(
   size_t i;
   const size_t m = (r*r+r)/2;
 
+  if(!r)
+    return;
   polxvec_init(hx, m, 1);
   polxvec_sprod_pairs(hx, phi, sx, r);
   for(i=0;i<m;i++){
