@@ -861,10 +861,26 @@ size_t polxvec_collaps_add_extension(polxvec c, const polxvec b, const polxvec a
   size_t i,j,k;
   size_t deg;
   double width_a,width_b,width_c;
+  uintptr_t c0,c1,a0,a1;
+  polxvec t,a_sv;
 
   deg = next2power(b->len);
   k  = extlen(c->len,deg);
   assert(a->len >= off_a+k);
+  if(!c->len)
+    return k;
+  c0 = (uintptr_t)c->proj[0];
+  c1 = (uintptr_t)&c->proj[0][(c->len-1)*c->stride];
+  a0 = (uintptr_t)&a->proj[0][off_a*a->stride];
+  a1 = (uintptr_t)&a->proj[0][(off_a+k-1)*a->stride];
+  if(MIN(c0,c1) <= MAX(a0,a1) && MIN(a0,a1) <= MAX(c0,c1)) {
+    polxvec_init(t,k,1);
+    polxvec_init_subvec2(a_sv,a,off_a,1,k);
+    polxvec_copy(t,a_sv);
+    polxvec_collaps_add_extension(c,b,t,0);
+    polxvec_free(t);
+    return k;
+  }
   assert(!c->widths || (a->widths && b->widths));
   if(c->widths) {
     width_b = 0;

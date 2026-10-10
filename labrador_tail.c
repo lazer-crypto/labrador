@@ -393,8 +393,7 @@ void ldr_tail_prove(
 
   // Aggregate Rq constraints
 
-  ldr_aggregate_rq(finalcnst, ist, zqagg, chalz_lift, chalx_lift, pp->nn, 
-                   pp->r_old, ost->h);
+  ldr_aggregate_rq(finalcnst, ist, zqagg, NULL, NULL, pp->nn, pp->r_old, ost->h);
 
   off = 0;
   for(i=0;i<pp->r;i++){

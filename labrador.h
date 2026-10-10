@@ -11,7 +11,7 @@ void ldr_aggregate_zq(sparsecnst zqagg[LIFTS], int64_t **chalz,
                       polxvec chalx[LIFTS], const statement ist, 
                       const uint8_t *jlmat1, const uint8_t *jlmat2, 
                       const int32_t p[256], size_t nn, uint8_t h[16]);
-void ldr_lifts_eval(polxvec liftx, const sparsecnst zqagg[LIFTS], 
+void ldr_lifts_eval(polxvec liftx, sparsecnst zqagg[LIFTS], 
                     const int64_t *chalz, const polxvec chalx[LIFTS], 
                     const statement ist, const polxvec sxq[], 
                     const polxvec sxl);

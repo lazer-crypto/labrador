@@ -7,8 +7,6 @@
 #include "malloc.h"
 #include "fips202.h"
 
-#define LDR_LIFT_CHUNK 64
-
 static size_t ldr_chalz_stride(const statement ist){
   return (256 + ist->zqcnst->sparse_nchal + ist->zqcnst->int_nchal + 7) & ~(size_t)7;
 }
@@ -60,7 +58,7 @@ void ldr_aggregate_zq(
 
 void ldr_lifts_eval(
   polxvec liftx,
-  const sparsecnst zqagg[LIFTS],
+  sparsecnst zqagg[LIFTS],
   const int64_t *chalz,
   const polxvec chalx[LIFTS],
   const statement ist,
@@ -68,29 +66,22 @@ void ldr_lifts_eval(
   const polxvec sxl
 )
 {
-  size_t i, off, len;
-  polxvec t, liftx_sv, phi_sv, sx_sv;
+  size_t i, nquad;
+  polxvec liftx_sv;
 
-  zqcnstset_lifts_eval(liftx, ist->zqcnst, &chalz[256], ldr_chalz_stride(ist),
-                       chalx, sxq, sxl);
-  polxvec_refresh(liftx);
-
-  polxvec_init(t, 1, 1);
-  for(off=0;off<sxl->len;off+=len){
-    len = MIN(LDR_LIFT_CHUNK, sxl->len - off);
-    polxvec_init_subvec2(sx_sv, sxl, off, 1, len);
-    for(i=0;i<LIFTS;i++){
-      polxvec_init_subvec2(phi_sv, zqagg[i]->lin->phi[0], off, 1, len);
-      polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);
-      polxvec_sprod(t, phi_sv, sx_sv);
-      polxvec_add(liftx_sv, liftx_sv, t);
-    }
+  nquad = 0;
+  for(i=0;i<ist->zqcnst->nsparse;i++){
+    nquad += ist->zqcnst->sparse[i]->quad->len;
   }
   for(i=0;i<LIFTS;i++){
+    quadfunc_free(zqagg[i]->quad);
+    quadfunc_init(zqagg[i]->quad, 0, nquad);
+    zqcnstset_aggregate_add(zqagg[i], ist->zqcnst, 
+                            &chalz[i*ldr_chalz_stride(ist) + 256], chalx[i]);
+    sparsecnst_refresh(zqagg[i]);
     polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);
-    polxvec_sub(liftx_sv, liftx_sv, zqagg[i]->b);
+    sparsecnst_eval(liftx_sv, zqagg[i], sxq, sxl);
   }
-  polxvec_free(t);
 }
 
 void ldr_aggregate_rq(
@@ -117,8 +108,9 @@ void ldr_aggregate_rq(
 
   finalcnst->lin->off[0] = 0;
   polxvec_init(finalcnst->lin->phi[0], nn, 1);
-  cnstset_aggregate(finalcnst, ist->rqcnst, ist->zqcnst, &chalz[256], 
-                    ldr_chalz_stride(ist), chalx_lift, zqagg, chalx);
+  cnstset_aggregate(finalcnst, ist->rqcnst, (chalz) ? ist->zqcnst : NULL, 
+                    (chalz) ? &chalz[256] : NULL, ldr_chalz_stride(ist), 
+                    chalx_lift, zqagg, chalx);
 
   finalcnst->quad->coeffs = realloc(finalcnst->quad->coeffs, 
                                     finalcnst->quad->len*sizeof(polx));
@@ -348,8 +340,7 @@ void ldr_prove(
 
   // Aggregate Rq constraints
 
-  ldr_aggregate_rq(finalcnst, ist, zqagg, chalz_lift, chalx_lift, pp->nn, 
-                   pp->r_old, ost->h);
+  ldr_aggregate_rq(finalcnst, ist, zqagg, NULL, NULL, pp->nn, pp->r_old, ost->h);
 
   off = 0;
   for(i=0;i<pp->r;i++){

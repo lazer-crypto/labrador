@@ -45,9 +45,83 @@ static void polxvec_guard(polxvec r, double inc){
   }
 }
 
+#define WUNIF (ldexp(1, 2*LOGQ)/12.0)
+
+static void polxvec_refreshed(polxvec t, const polxvec a){
+  polxvec_init(t, a->len, 1);
+  polxvec_copy(t, a);
+  polxvec_refresh(t);
+}
+
+static void polxvec_prod_add(
+  polxvec r,
+  const polxvec c,
+  const polxvec src,
+  double wc,
+  double ws,
+  int rot
+)
+{
+  size_t i;
+  double w;
+  polxvec s2, c2, cr, t1, t2;
+
+  if(N*wc*ws <= MAXWIDTH - WUNIF){
+    polxvec_guard(r, N*wc*ws);
+    if(rot){
+      polxvec_collaps_add_extension(r, c, src, 0);
+    }
+    else{
+      polxvec_mul_add(r, c, src);
+    }
+    return;
+  }
+
+  if(ws > WUNIF){
+    polxvec_refreshed(s2, src);
+    ws = WUNIF;
+  }
+  else{
+    polxvec_init(s2, src->len, 1);
+    polxvec_copy(s2, src);
+  }
+  polxvec_init(c2, c->len, 1);
+  polxvec_copy(c2, c);
+  w = 0;
+  for(i=0;i<c2->len;i++){
+    if(c2->widths[i] > WUNIF){
+      polxvec_init_subvec2(t1, c2, i, 1, 1);
+      polxvec_refresh(t1);
+    }
+    w = (rot) ? w + c2->widths[i] : MAX(w, c2->widths[i]);
+  }
+
+  if(!rot){
+    polxvec_guard(r, N*w*ws);
+    polxvec_mul_add(r, c2, s2);
+  }
+  else if(N*w*ws <= MAXWIDTH - WUNIF){
+    polxvec_guard(r, N*w*ws);
+    polxvec_collaps_add_extension(r, c2, s2, 0);
+  }
+  else{
+    polxvec_init(cr, c2->len, 1);
+    for(i=0;i<c2->len;i++){
+      polxvec_setzero(cr, 0, 1, cr->len);
+      polxvec_init_subvec2(t1, cr, i, 1, 1);
+      polxvec_init_subvec2(t2, c2, i, 1, 1);
+      polxvec_copy(t1, t2);
+      polxvec_guard(r, N*c2->widths[i]*ws);
+      polxvec_collaps_add_extension(r, cr, s2, 0);
+    }
+    polxvec_free(cr);
+  }
+  polxvec_free(c2);
+  polxvec_free(s2);
+}
+
 static void polxvec_mul_add_guarded(polxvec r, const polxvec a, const polxvec b){
-  polxvec_guard(r, N*polxvec_maxwidth(a)*polxvec_maxwidth(b));
-  polxvec_mul_add(r, a, b);
+  polxvec_prod_add(r, a, b, polxvec_maxwidth(a), polxvec_maxwidth(b), 0);
 }
 
 /*
@@ -119,8 +193,8 @@ void quadfunc_eval_add(
       polxvec_init_subvec2(sxk, sx[k], off, 1, chunk);
       polxvec_sprod_extension(tmp, sxj, sxk);
       polxvec_refresh(tmp);
-      polxvec_guard(ev, N*quad->coeffs[i]->width*polxvec_maxwidth(tmp));
       polxvec_polx_mul_add(ev, quad->coeffs[i], tmp);
+      polxvec_refresh(ev); //XXX required ?
       off += chunk;
       len -= chunk;
     }
@@ -343,11 +417,12 @@ void polxvec_rotation_aggregate_add(
 {
   size_t i;
   double w = 0;
+  polxvec b_sv;
 
   for(i=0;i<a->len;i++)
     w += a->widths[i*a->stride];
-  polxvec_guard(r, N*w*polxvec_maxwidth(b));
-  polxvec_collaps_add_extension(r, a, b, 0);
+  polxvec_init_subvec2(b_sv, b, 0, 1, extlen(r->len, next2power(a->len)));
+  polxvec_prod_add(r, a, b_sv, w, polxvec_maxwidth(b_sv), 1);
 }
 
 #define AGG_MUL 0
@@ -361,7 +436,8 @@ typedef struct {
   int cown;
   int pown;
   void *mem;
-  double inc;
+  double wc;
+  double ws;
   size_t blk;
   size_t n;
   size_t cur;
@@ -461,27 +537,25 @@ static void aggsrc_parts(aggsrc *s, size_t n, const size_t *off, const polxvec *
 
 static void aggsrc_inc(aggsrc *s){
   size_t j;
-  double w = 0;
   polxvec src_sv;
 
+  s->ws = 0;
   for(j=0;j<s->n;j++){
     if(s->src[j]->len == 0){
       continue;
     }
     polxvec_init_subvec2(src_sv, s->src[j], 0, 1, (s->type == AGG_ROT) ? 
                          extlen(s->src[j]->len, s->blk) : s->src[j]->len);
-    w = MAX(w, polxvec_maxwidth(src_sv));
+    s->ws = MAX(s->ws, polxvec_maxwidth(src_sv));
   }
+  s->wc = 0;
   if(s->type == AGG_SUB){
-    s->inc = w;
     return;
   }
-  s->inc = 0;
   for(j=0;j<s->c->len;j++){
-    s->inc = (s->type == AGG_ROT) ? s->inc + s->c->widths[j*s->c->stride]
-                                  : MAX(s->inc, s->c->widths[j*s->c->stride]);
+    s->wc = (s->type == AGG_ROT) ? s->wc + s->c->widths[j*s->c->stride]
+                                 : MAX(s->wc, s->c->widths[j*s->c->stride]);
   }
-  s->inc *= N*w;
 }
 
 static size_t aggsrc_last(const aggsrc *s, size_t j){
@@ -522,26 +596,31 @@ static void aggsrc_apply(polxvec out, const aggsrc *s, size_t j, size_t lo, size
     return;
   }
 
-  polxvec_init_subvec2(src_sv, s->src[j], a, 1, b-a);
+  polxvec_init_subvec2(src_sv, s->src[j], a, 1, 
+                       (s->type == AGG_ROT) ? extlen(b-a, blk) : b-a);
   if(s->type == AGG_OUTER){
     for(k=0;k<blk;k++){
       polxvec_init_subvec2(c_sv, s->c, k, 1, 1);
       polxvec_init_subvec2(out_sv, out, o + a*blk + k, blk, b-a);
-      polxvec_guard(out_sv, s->inc);
-      polxvec_mul_add(out_sv, c_sv, src_sv);
+      polxvec_prod_add(out_sv, c_sv, src_sv, s->wc, s->ws, 0);
     }
     return;
   }
   polxvec_init_subvec2(out_sv, out, o + a, 1, b-a);
-  polxvec_guard(out_sv, s->inc);
-  if(s->type == AGG_ROT){
-    polxvec_collaps_add_extension(out_sv, s->c, src_sv, 0);
-  }
-  else if(s->type == AGG_SUB){
-    polxvec_sub(out_sv, out_sv, src_sv);
+  if(s->type == AGG_SUB){
+    if(s->ws > MAXWIDTH - WUNIF){
+      polxvec_refreshed(c_sv, src_sv);
+      polxvec_guard(out_sv, WUNIF);
+      polxvec_sub(out_sv, out_sv, c_sv);
+      polxvec_free(c_sv);
+    }
+    else{
+      polxvec_guard(out_sv, s->ws);
+      polxvec_sub(out_sv, out_sv, src_sv);
+    }
   }
   else{
-    polxvec_mul_add(out_sv, s->c, src_sv);
+    polxvec_prod_add(out_sv, s->c, src_sv, s->wc, s->ws, s->type == AGG_ROT);
   }
 }
 
@@ -556,9 +635,19 @@ static void aggbuf_apply(polxvec out, aggbuf ab, int fresh){
     s = ab->src[i];
     aggsrc_inc(s);
     for(j=0;j<s->n;j++){
+      if(s->src[j]->len == 0){
+        continue;
+      }
       lo = MIN(lo, s->off[j]);
       end = MAX(end, aggsrc_last(s, j) + 1);
     }
+  }
+  if(!fresh && ab->n == 1){
+    s = ab->src[0];
+    for(j=0;j<s->n;j++){
+      aggsrc_apply(out, s, j, s->off[j], out->len);
+    }
+    return;
   }
   lo &= ~(size_t)(AGG_TILE-1);
 
@@ -1241,8 +1330,9 @@ void zqcnstset_aggregate_add(
 }
 
 static void polxvec_sprod_guarded(polxvec r, const polxvec a, const polxvec b){
-  size_t off, chunk;
-  polxvec a_sv, b_sv, t;
+  size_t i, j;
+  double w, wj;
+  polxvec a_sv, b_sv, ta, tb, t;
 
   if(polxvec_sprod_width(a, b) <= MAXWIDTH){
     polxvec_sprod(r, a, b);
@@ -1250,11 +1340,30 @@ static void polxvec_sprod_guarded(polxvec r, const polxvec a, const polxvec b){
   }
   polxvec_init(t, 1, 1);
   polxvec_setzero(r, 0, 1, 1);
-  for(off=0;off<a->len;off+=chunk){
-    chunk = MIN(1000, a->len - off);
-    polxvec_init_subvec2(a_sv, a, off, 1, chunk);
-    polxvec_init_subvec2(b_sv, b, off, 1, chunk);
-    polxvec_sprod(t, a_sv, b_sv);
+  for(i=0;i<a->len;i=j){
+    w = 0;
+    for(j=i;j<a->len;j++){
+      wj = N*a->widths[j*a->stride]*b->widths[j*b->stride];
+      if(w + wj > MAXWIDTH){
+        break;
+      }
+      w += wj;
+    }
+    if(j == i){
+      polxvec_init_subvec2(a_sv, a, i, 1, 1);
+      polxvec_init_subvec2(b_sv, b, i, 1, 1);
+      polxvec_refreshed(ta, a_sv);
+      polxvec_refreshed(tb, b_sv);
+      polxvec_sprod(t, ta, tb);
+      polxvec_free(ta);
+      polxvec_free(tb);
+      j = i + 1;
+    }
+    else{
+      polxvec_init_subvec2(a_sv, a, i, 1, j-i);
+      polxvec_init_subvec2(b_sv, b, i, 1, j-i);
+      polxvec_sprod(t, a_sv, b_sv);
+    }
     polxvec_refresh(t);
     polxvec_guard(r, t->widths[0]);
     polxvec_add(r, r, t);
@@ -1366,6 +1475,9 @@ static void aggbuf_zq_lifts(
   off = 0;
   for(j=0;j<zqc->nsigmam1;j++){
     len = zqc->sigmam1[j]->len;
+    if(len == 0){
+      continue;
+    }
     for(l=0;l<nl;l++){
       polxvec_init_subvec2(chal_sv, chal, l, 1, 1);
       s = aggbuf_new(ab, AGG_MUL, 1, chal_sv);
@@ -1446,7 +1558,9 @@ void cnstset_aggregate(
   polxvec_init_subvec2(chal_sv, chal, 0, 1, nrq);
   aggbuf_rq(ab, out, rqc, chal_sv);
   polxvec_init_subvec2(chal_sv, chal, nrq, 1, chal->len - nrq);
-  aggbuf_zq_lifts(ab, out, zqc, chalz, stride, chalx, chal_sv);
+  if(zqc){
+    aggbuf_zq_lifts(ab, out, zqc, chalz, stride, chalx, chal_sv);
+  }
   if(dense){
     for(i=0;i<chal->len - nrq;i++){
       polxvec_init_subvec2(chal_sv, chal, nrq + i, 1, 1);
@@ -1527,6 +1641,9 @@ void zqcnstset_lifts_eval(
   off = 0;
   for(j=0;j<zqc->nsigmam1;j++){
     len = zqc->sigmam1[j]->len;
+    if(len == 0){
+      continue;
+    }
     polxvec_init_subvec2(s1, sxl, zqc->sigmam1[j]->off1, 1, len);
     polxvec_init_subvec2(s2, sxl, zqc->sigmam1[j]->off2, 1, len);
     polxvec_init_subvec(t, t, 0, 1, len);
