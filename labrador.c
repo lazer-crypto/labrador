@@ -94,7 +94,7 @@ void ldr_aggregate_rq(
 )
 {
   size_t nchalx;
-  polxvec chalx, chalx_sv;
+  polxvec chalx;
 
   nchalx = ist->rqcnst->sparse_nchal + ist->rqcnst->com_nchal;
   polxvec_init(chalx, nchalx + LIFTS, 1);
@@ -106,17 +106,8 @@ void ldr_aggregate_rq(
 
   finalcnst->lin->off[0] = 0;
   polxvec_init(finalcnst->lin->phi[0], nn, 1);
-  polxvec_setzero(finalcnst->lin->phi[0], 0, 1, nn);
-
-  polxvec_init_subvec2(chalx_sv, chalx, 0, 1, nchalx);
-  rqcnstset_aggregate_add(finalcnst, ist->rqcnst, chalx_sv);
-
-  polxvec_init_subvec2(chalx_sv, chalx, nchalx, 1, LIFTS);
-  zqcnstset_lifts_aggregate_add(finalcnst, ist->zqcnst, &chalz[256], 
-                                ldr_chalz_stride(ist), chalx_lift, chalx_sv);
-  sparsecnst_aggregate_add(finalcnst, zqagg, LIFTS, chalx_sv, NULL, 1);
-
-  sparsecnst_refresh(finalcnst);
+  cnstset_aggregate(finalcnst, ist->rqcnst, ist->zqcnst, &chalz[256], 
+                    ldr_chalz_stride(ist), chalx_lift, zqagg, chalx);
 
   finalcnst->quad->coeffs = realloc(finalcnst->quad->coeffs, 
                                     finalcnst->quad->len*sizeof(polx));

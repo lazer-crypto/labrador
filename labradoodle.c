@@ -154,36 +154,13 @@ static void ldd_aggregate_rq(
   timing_end(&time);
   timing_print(&time, 4);
 
-  timing_start(&time, "Set constraint to 0s");
+  timing_start(&time, "Aggregate");
 
   finalcnst->lin->off[0] = 0;
   polxvec_init(finalcnst->lin->phi[0], pp->nn, 1);
-  polxvec_setzero(finalcnst->lin->phi[0], 0, 1, pp->nn);
-
-  timing_end(&time);
-  timing_print(&time, 4);
-
-  timing_start(&time, "Aggregate input");
-
-  polxvec_init_subvec2(chalx_sv, chalx, 0, 1, nchalx);
-  rqcnstset_aggregate_add(finalcnst, ist->rqcnst, chalx_sv);
-  
-  timing_end(&time);
-  timing_print(&time, 4);
-
-  timing_start(&time, "Aggregate Zq into Rq");
-
-  polxvec_init_subvec2(chalx_sv, chalx, nchalx, 1, LIFTS);
-  zqcnstset_lifts_aggregate_add(finalcnst, ist->zqcnst, chalz_lift, 
-                                ist->zqcnst->sparse_nchal+ist->zqcnst->int_nchal,
-                                chalx_lift, chalx_sv);
-
-  timing_end(&time);
-  timing_print(&time, 4);
-
-  timing_start(&time, "Refresh");
-
-  sparsecnst_refresh(finalcnst);
+  cnstset_aggregate(finalcnst, ist->rqcnst, ist->zqcnst, chalz_lift, 
+                    ist->zqcnst->sparse_nchal + ist->zqcnst->int_nchal,
+                    chalx_lift, NULL, chalx);
 
   timing_end(&time);
   timing_print(&time, 4);
@@ -191,6 +168,7 @@ static void ldd_aggregate_rq(
   finalcnst->quad->coeffs = realloc(finalcnst->quad->coeffs, 
                                     finalcnst->quad->len*sizeof(polx));
 
+  polxvec_init_subvec2(chalx_sv, chalx, nchalx, 1, LIFTS);
   polxvec_copy(chalx_zq, chalx_sv);
 
   polxvec_free(chalx);
