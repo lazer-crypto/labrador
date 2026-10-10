@@ -1667,6 +1667,8 @@ void polyvec_sprod_extension_blocked(poly *c, const poly *a, const poly *b, ssiz
   poly x, h;
   const __m512i tab = sprod_pairs_table(prime);
 
+  if(!clen)
+    return;
   for(i=0;i<deg;i++) {
     pa[i] = &a[stride_a*i];
     pb[i] = &b[stride_b*i];
