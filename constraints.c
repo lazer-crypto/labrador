@@ -360,6 +360,7 @@ typedef struct {
   int type;
   int cown;
   int pown;
+  void *mem;
   double inc;
   size_t blk;
   size_t n;
@@ -397,6 +398,7 @@ static void aggbuf_free(aggbuf ab){
       polxvec_free(ab->src[i]->part);
     }
     free(ab->src[i]->idx);
+    free(ab->src[i]->mem);
     free(ab->src[i]);
   }
   free(ab->src);
@@ -419,6 +421,7 @@ static aggsrc *aggbuf_new(aggbuf ab, int type, size_t blk, const polxvec c){
   s->off = &s->poff;
   s->src = &s->part;
   s->idx = NULL;
+  s->mem = NULL;
   if(c){
     s->c[0] = c[0];
   }
@@ -1314,10 +1317,11 @@ static void aggbuf_zq_lifts(
   const polxvec chal
 )
 {
-  size_t i, j, k, l, off, len, nquad;
+  size_t i, j, k, l, m, off, len, nquad;
+  size_t *offs;
   const int64_t *cz;
   aggsrc *s;
-  polxvec gamma, cc, chal_sv, chalx_sv;
+  polxvec gamma, cc, chal_sv, chalx_sv, *parts;
   sparsecnst agg;
   const size_t nl = chal->len;
 
@@ -1393,19 +1397,30 @@ static void aggbuf_zq_lifts(
     off += len;
   }
 
-  for(l=0;l<nl;l++){
+  len = 0;
+  for(i=0;i<zqc->nint;i++){
+    len += zqc->intc[i]->rank;
+  }
+  for(l=0;l<nl && len>0;l++){
     cz = &chalz[l*stride + zqc->sparse_nchal];
     polxvec_init_subvec2(chal_sv, chal, l, 1, 1);
+    s = aggbuf_new(ab, AGG_MUL, 1, chal_sv);
+    polxvec_init(s->part, len, 1);
+    s->pown = 1;
+    s->mem = _malloc(len*(sizeof(size_t) + sizeof(polxvec)));
+    offs = s->mem;
+    parts = (polxvec *)&offs[len];
+    m = 0;
     for(i=0;i<zqc->nint;i++){
       for(k=0;k<zqc->intc[i]->rank;k++){
-        s = aggbuf_new(ab, AGG_MUL, 1, chal_sv);
-        polxvec_init(s->part, 1, 1);
-        s->pown = 1;
-        s->poff = zqc->intc[i]->off + k;
-        intcnst_phi(s->part, cz, k);
+        offs[m] = zqc->intc[i]->off + k;
+        polxvec_init_subvec2(parts[m], s->part, m, 1, 1);
+        intcnst_phi(parts[m], cz, k);
         cz += (k == 0) ? N-1 : N;
+        m++;
       }
     }
+    aggsrc_parts(s, len, offs, parts);
   }
 
   polxvec_free(cc);
