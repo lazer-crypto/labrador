@@ -34,7 +34,7 @@ static int16_t montmul(int16_t a, int16_t b, const pdata prime) {
   int16_t m;
 
   t = (int32_t)a*b;
-  m = t*prime->pinv;
+  m = (int16_t)((uint32_t)t*(uint32_t)(uint16_t)prime->pinv);
   return (t - (int32_t)m*prime->p) >> 16;
 }
 

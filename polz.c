@@ -498,7 +498,7 @@ static void topolx(poly *r[K], const polz a) {
 
   for(i=0;i<K;i++) {
     p[i] = _mm512_set1_epi16(primes[i]->p);
-    pinvt4[i] = _mm512_set1_epi16(primes[i]->pinv << 2);
+    pinvt4[i] = _mm512_slli_epi16(_mm512_set1_epi16(primes[i]->pinv),2);
   }
 
   for(j=0;j<N/32;j++) {
@@ -553,24 +553,54 @@ struct crtdata {
   __m512i t[3];
   __m512i x[3][L];
   __m512i b[L];
+  int fast;
 };
+
+static int crt_fast(int center) {
+  size_t i,j;
+  int64_t b,s,amax[K],smax[L];
+  static int fast[2] = {-1,-1};
+  const int cap[3] = {3,2,1};
+
+  if(fast[center] >= 0)
+    return fast[center];
+
+  fast[center] = 1;
+  s = 1024;
+  for(i=0;i<K;i++) {
+    amax[i] = (i < 3) ? (cap[i]+1)*primes[i]->p - 1 : primes[i]->p - 1;
+    fast[center] &= amax[i] < 32768 && 2*primes[i]->p <= 32768;
+    s += (primes[i]->p - 1)*primes[i]->v >> 16;
+  }
+  fast[center] &= s >> 11 <= cap[0] + cap[1] + cap[2];
+
+  b = 6*(modulus->pmq->limbs[0] + ((int64_t)modulus->pmq->limbs[1] << 14) + ((int64_t)modulus->pmq->limbs[2] << 28));
+  b += center ? (QOFF-1)/2 : 0;
+  for(j=0;j<L;j++) {
+    s = (j < L-1) ? b & 0x3FFF : b;
+    for(i=0;i<K;i++)
+      s += amax[i]*modulus->xvec[i]->limbs[j];
+    smax[j] = s;
+    b >>= 14;
+  }
+  s = smax[0] + (0x3FFF << 14) + ((smax[2] + (smax[1] >> 14)) >> (LOGQ-28))*QOFF;
+  fast[center] &= smax[1] < ((int64_t)1 << 31) && smax[2] < ((int64_t)1 << 31) && s + QOFF < ((int64_t)1 << 31);
+  s = ((int64_t)1 << (LOGQ-28)) + (s >> 28) + 1;
+  fast[center] &= s <= (((int64_t)1 << LOGQ) - QOFF + (center ? (int64_t)1 << (LOGQ-1) : ((int64_t)1 << LOGQ) - QOFF)) >> 28;
+  return fast[center];
+}
 
 static void crt_init(struct crtdata *c, int center) {
   size_t i,j;
-  int64_t b,s;
-  int64_t amax[K],smax[L];
+  int64_t b;
   const int cap[3] = {3,2,1};
   __m512i k,u;
 
-  s = 1024;
+  c->fast = crt_fast(center);
   for(i=0;i<K;i++) {
     c->p[i] = _mm512_set1_epi16(primes[i]->p);
     c->v[i] = _mm512_set1_epi16(primes[i]->v);
-    amax[i] = (i < 3) ? (cap[i]+1)*primes[i]->p - 1 : primes[i]->p - 1;
-    assert(amax[i] < 32768);
-    s += (primes[i]->p - 1)*primes[i]->v >> 16;
   }
-  assert(s >> 11 <= cap[0] + cap[1] + cap[2]);
   k = _mm512_set_epi16(31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,
                        15,14,13,12,11,10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0);
   k = _mm512_subs_epu16(_mm512_set1_epi16(6),k);
@@ -587,17 +617,9 @@ static void crt_init(struct crtdata *c, int center) {
   b = 6*(modulus->pmq->limbs[0] + ((int64_t)modulus->pmq->limbs[1] << 14) + ((int64_t)modulus->pmq->limbs[2] << 28));
   b += center ? (QOFF-1)/2 : 0;
   for(j=0;j<L;j++) {
-    s = (j < L-1) ? b & 0x3FFF : b;
-    c->b[j] = _mm512_set1_epi32(s);
-    for(i=0;i<K;i++)
-      s += amax[i]*modulus->xvec[i]->limbs[j];
-    smax[j] = s;
+    c->b[j] = _mm512_set1_epi32((j < L-1) ? b & 0x3FFF : b);
     b >>= 14;
   }
-  s = smax[0] + (0x3FFF << 14) + ((smax[2] + (smax[1] >> 14)) >> (LOGQ-28))*QOFF;
-  assert(smax[1] < ((int64_t)1 << 31) && smax[2] < ((int64_t)1 << 31) && s + QOFF < ((int64_t)1 << 31));
-  s = ((int64_t)1 << (LOGQ-28)) + (s >> 28) + 1;
-  assert(s <= (((int64_t)1 << LOGQ) - QOFF + (center ? (int64_t)1 << (LOGQ-1) : ((int64_t)1 << LOGQ) - QOFF)) >> 28);
 }
 
 static inline __m512i crt_alpha(__m512i al[K], const __m512i x[K], const struct crtdata *c) {
@@ -760,6 +782,14 @@ static void crtpolx(polz r, const poly *a[K], int center, const struct crtdata *
     }
     k[0] = crt_alpha(al[0],x[0],c);
     k[1] = crt_alpha(al[1],x[1],c);
+    if(!c->fast) {
+      crt_exact(t,al,k,2);
+      for(i=0;i<L;i++) {
+        _mm512_store_si512(&r->limbs[i]->v[j],t[0][i]);
+        _mm512_store_si512(&r->limbs[i]->v[j+1],t[1][i]);
+      }
+      continue;
+    }
     s0 = crt_sum(t[0],al[0],k[0],center,c);
     s1 = crt_sum(t[1],al[1],k[1],center,c);
     if(s0 && s1)
@@ -773,6 +803,8 @@ static void crtpolx(polz r, const poly *a[K], int center, const struct crtdata *
       _mm512_store_si512(&r->limbs[i]->v[j+1],t[1][i]);
     }
   }
+  if(center && !c->fast)
+    polz_center(r);
 }
 
 /* Explicit CRT mod q:
@@ -803,19 +835,39 @@ void polz_frompolx_center(polz r, const polx a) {
 
 static void frompolxvec(polz *r, const polxvec a, size_t off, ssize_t stride, size_t len, int center) {
   size_t i,j;
+  uintptr_t lo,hi,u,v;
   const poly *b[K];
+  poly *t = NULL;
   struct crtdata c;
 
   assert(off < a->len);
   assert(off+stride*(len-1) < a->len);
+  if(!len)
+    return;
   crt_init(&c,center);
   stride *= a->stride;
   off *= a->stride;
+
+  lo = UINTPTR_MAX;
+  hi = 0;
+  for(i=0;i<K;i++) {
+    u = (uintptr_t)&a->proj[i][off];
+    v = (uintptr_t)&a->proj[i][off+stride*(len-1)];
+    lo = MIN(lo,MIN(u,v));
+    hi = MAX(hi,MAX(u,v) + sizeof(poly));
+  }
+  if((uintptr_t)r < hi && lo < (uintptr_t)&r[len]) {
+    t = _aligned_alloc(64,len*K*sizeof(poly));
+    for(i=0;i<K;i++)
+      polyvec_copy(&t[i],&a->proj[i][off],K,stride,len);
+  }
+
   for(j=0;j<len;j++) {
     for(i=0;i<K;i++)
-      b[i] = &a->proj[i][off+stride*j];
+      b[i] = t ? &t[K*j+i] : &a->proj[i][off+stride*j];
     crtpolx(r[j],b,center,&c);
   }
+  free(t);
 }
 
 static void refreshpolx(poly *a[K], const struct crtdata *c) {
@@ -824,9 +876,17 @@ static void refreshpolx(poly *a[K], const struct crtdata *c) {
   __m512i x[2][K],al[2][K],k[2],t[2][L],g,h;
   __m512i p[K],pinvt4[K];
 
+  if(!c->fast) {
+    polz z;
+
+    crtpolx(z,(const poly **)a,1,c);
+    topolx(a,z);
+    return;
+  }
+
   for(i=0;i<K;i++) {
     p[i] = _mm512_set1_epi16(primes[i]->p);
-    pinvt4[i] = _mm512_set1_epi16(primes[i]->pinv << 2);
+    pinvt4[i] = _mm512_slli_epi16(_mm512_set1_epi16(primes[i]->pinv),2);
     poly_invntt_scale(b[i],*a[i],primes[i]->t,primes[i]);
   }
 
@@ -875,9 +935,10 @@ void polxvec_refresh(polxvec r) {
   poly *b[K];
   struct crtdata c;
 
+  if(!r->len)
+    return;
   crt_init(&c,1);
-  if(r->len)
-    polxvec_setwidths1(r,0,1,r->len,ldexp(1,2*LOGQ)/12.0);
+  polxvec_setwidths1(r,0,1,r->len,ldexp(1,2*LOGQ)/12.0);
   for(j=0;j<r->len;j++) {
     for(i=0;i<K;i++)
       b[i] = &r->proj[i][r->stride*j];
