@@ -517,8 +517,10 @@ static void topolx(poly *r[K], const polz a) {
     }
   }
 
-  for(i=0;i<K;i++)
-    poly_ntt(*r[i],*r[i],primes[i]);
+  for(i=0;i+1<K;i+=2)
+    poly_ntt2(*r[i],*r[i+1],*r[i],*r[i+1],primes[i],primes[i+1]);
+  if(K&1)
+    poly_ntt(*r[K-1],*r[K-1],primes[K-1]);
 }
 
 void polz_topolx(polx r, const polz a) {
@@ -914,8 +916,10 @@ static void refreshpolx(poly *a[K], const struct crtdata *c) {
     }
   }
 
-  for(i=0;i<K;i++)
-    poly_ntt(*a[i],b[i],primes[i]);
+  for(i=0;i+1<K;i+=2)
+    poly_ntt2(*a[i],*a[i+1],b[i],b[i+1],primes[i],primes[i+1]);
+  if(K&1)
+    poly_ntt(*a[K-1],b[K-1],primes[K-1]);
 }
 
 void polx_refresh(polx r) {

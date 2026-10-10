@@ -307,8 +307,10 @@ void polx_frompoly(polx r, const poly a, double width) {
 
   assert(width <= MAXWIDTH);
   r->width = width;
-  for(i=0;i<K;i++)
-    poly_ntt_scale(r->proj[i],a,primes[i]->s,primes[i]);
+  for(i=0;i+1<K;i+=2)
+    poly_ntt_scale2(r->proj[i],r->proj[i+1],a,a,primes[i]->s,primes[i+1]->s,primes[i],primes[i+1]);
+  if(K&1)
+    poly_ntt_scale(r->proj[K-1],a,primes[K-1]->s,primes[K-1]);
 }
 
 void polxvec_frompolyvec(polxvec r, const poly *a, ssize_t stride, size_t len, double width) {
@@ -316,9 +318,13 @@ void polxvec_frompolyvec(polxvec r, const poly *a, ssize_t stride, size_t len, d
 
   assert(r->len >= len);
   polxvec_setwidths1(r,0,1,len,width);
-  for(j=0;j<len;j++)
-    for(i=0;i<K;i++)
-      poly_ntt_scale(r->proj[i][j*r->stride],a[j*stride],primes[i]->s,primes[i]);
+  for(j=0;j<len;j++) {
+    for(i=0;i+1<K;i+=2)
+      poly_ntt_scale2(r->proj[i][j*r->stride],r->proj[i+1][j*r->stride],a[j*stride],a[j*stride],
+                      primes[i]->s,primes[i+1]->s,primes[i],primes[i+1]);
+    if(K&1)
+      poly_ntt_scale(r->proj[K-1][j*r->stride],a[j*stride],primes[K-1]->s,primes[K-1]);
+  }
 }
 
 void polx_frompolxvec(polx r, const polxvec a, size_t j) {
