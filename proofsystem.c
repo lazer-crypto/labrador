@@ -208,18 +208,19 @@ void jl_aggregate_mat(
   const int64_t *chalz
 )
 {
-  size_t i;
+  size_t i, j, k;
   int64_t Q = (1ULL<<LOGQ)-QOFF;
   __attribute__((aligned(64)))
   int64_t chalz_div2[LIFTS*256];
   __int128_t inv2 = (Q+1)/2;
 
-  assert(nphi <= LIFTS);
-  for(i=0;i<256*nphi;i++){
-    chalz_div2[i] = cmodq((chalz[i] * inv2) % Q);
+  for(j=0;j<nphi;j+=k){
+    k = MIN(LIFTS, nphi-j);
+    for(i=0;i<256*k;i++){
+      chalz_div2[i] = cmodq((chalz[256*j+i] * inv2) % Q);
+    }
+    polxvec_jlproj_collapsmat(&phi[j], k, jlmat1, jlmat2, chalz_div2);
   }
-
-  polxvec_jlproj_collapsmat(phi, nphi, jlmat1, jlmat2, chalz_div2);
 }
 
 /*
