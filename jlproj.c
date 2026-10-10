@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <assert.h>
 #include <immintrin.h>
 #include <stdlib.h>
 #include <string.h>
@@ -559,11 +560,17 @@ void jlproj_expand_challenge(int64_t alpha[256], const uint8_t buf[256*QBYTES]) 
 void polxvec_jlproj_collapsmat(polxvec *r, size_t nr, const uint8_t *mat1, const uint8_t *mat2,
                                const int64_t *alpha)
 {
-  size_t i,j,l;
-  size_t len = r[0]->len;
+  size_t i,j,l,len;
   __m512i tab[LIFTS*8*16];
   alignas(64) int64_t raw[LIFTS*16*N];
   polz t[16];
+
+  if(!nr)
+    return;
+  assert(nr <= LIFTS);
+  len = r[0]->len;
+  for(l=1;l<nr;l++)
+    assert(r[l]->len == len);
 
   for(l=0;l<nr;l++)
     for(i=0;i<8;i++)

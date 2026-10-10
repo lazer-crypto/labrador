@@ -28,7 +28,7 @@ void ldr_aggregate_zq(
 
   nchalz = ist->zqcnst->sparse_nchal + ist->zqcnst->int_nchal;
   nchalx =  ist->zqcnst->sigmam1_nchal;
-  chalz = nchalz > 0 ? _malloc(LIFTS * nchalz * sizeof(int64_t)) : NULL;
+  chalz = _malloc((LIFTS * nchalz + 1) * sizeof(int64_t));
 
   for(i=0;i<LIFTS;i++){
     shake128(hashbuf, sizeof(hashbuf), h, 16);
