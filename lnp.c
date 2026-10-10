@@ -131,28 +131,37 @@ static int lnp_polxvec_iszero_at(const polxvec r, size_t i) {
   return !_mm512_test_epi64_mask(f,f);
 }
 
-static void lnp_polxvec_refresh_nonzero(polxvec r) {
-  size_t i,j;
-  polxvec sv;
+static void lnp_sparsecnst_nonzero_view(sparsecnst v, const sparsecnst c) {
+  size_t i,j,k,n,p,len;
+  size_t *runs;
 
-  for(i=0;i<r->len;i=j) {
-    for(;i<r->len && lnp_polxvec_iszero_at(r,i);i++);
-    for(j=i;j<r->len && !lnp_polxvec_iszero_at(r,j);j++);
-    if(j > i) {
-      polxvec_init_subvec2(sv,r,i,1,j-i);
-      polxvec_refresh(sv);
+  len = 0;
+  for(p=0;p<c->lin->nparts;p++)
+    len += c->lin->phi[p]->len/2 + 1;
+  runs = _malloc(3*len*sizeof(size_t));
+  n = 0;
+  for(p=0;p<c->lin->nparts;p++) {
+    for(i=0;i<c->lin->phi[p]->len;i=j) {
+      for(;i<c->lin->phi[p]->len && lnp_polxvec_iszero_at(c->lin->phi[p],i);i++);
+      for(j=i;j<c->lin->phi[p]->len && !lnp_polxvec_iszero_at(c->lin->phi[p],j);j++);
+      if(j > i) {
+        runs[3*n+0] = p;
+        runs[3*n+1] = i;
+        runs[3*n+2] = j-i;
+        n++;
+      }
     }
   }
-}
 
-static void lnp_sparsecnst_refresh_nonzero(sparsecnst c) {
-  size_t i;
-
-  for(i=0;i<c->quad->len;i++)
-    polx_refresh(c->quad->coeffs[i]);
-  for(i=0;i<c->lin->nparts;i++)
-    lnp_polxvec_refresh_nonzero(c->lin->phi[i]);
-  polxvec_refresh(c->b);
+  v->quad[0] = c->quad[0];
+  v->b[0] = c->b[0];
+  linfunc_init(v->lin, c->lin->rank, n, n);
+  for(k=0;k<n;k++) {
+    p = runs[3*k];
+    v->lin->off[k] = c->lin->off[p] + runs[3*k+1];
+    polxvec_init_subvec2(v->lin->phi[k], c->lin->phi[p], runs[3*k+1], 1, runs[3*k+2]);
+  }
+  free(runs);
 }
 
 static int64_t lnp_polzvec_sprodz(const polz *a, const polz *b, size_t len) {
@@ -378,7 +387,7 @@ void lnp_prove(lnp_proof pi, statement ost, witness owt, const statement ist, co
     polz v0[LNP_NPROJ * 256 / N];
     poly vtilde[LNP_NPROJ * 256 / N * 2 * 2]; // (w,t,sigmam1(w),sigmam1(t))
     int64_t ub;
-    sparsecnst zqagg[LIFTS];
+    sparsecnst zqagg[LIFTS], zqview[LIFTS];
     polz y[256 / N];
     polz zp[256 / N];
     polz pv[256 / N];
@@ -748,8 +757,10 @@ rej_loop1:
     ist_shift_positions(ist, pp, +1);
 
     lnp_aggregate_zq (zqagg, pp, ist, jlmat1, jlmat2, jlmat3, jlmat4, zp, ost->h);
-    for (i = 0; i < LIFTS; i++)
-        lnp_sparsecnst_refresh_nonzero(zqagg[i]);
+    for (i = 0; i < LIFTS; i++) {
+        lnp_sparsecnst_nonzero_view(zqview[i], zqagg[i]);
+        sparsecnst_refresh(zqview[i]);
+    }
 
     polxvec hix, sxl, sxq[NWIT], gx, phi, ppowers, m1powers, sv, yxl;
     polxvec __t;
@@ -802,7 +813,7 @@ rej_loop1:
     polxvec_init_subvec2(sxq[XBIN],  sxl, pp->off[XBIN],  1, pp->xbinlen);
 
     for (i = 0; i < LIFTS; i++) {
-        sparsecnst_eval (hix, zqagg[i], sxq, sxl);
+        sparsecnst_eval (hix, zqview[i], sxq, sxl);
 #ifdef DEBUG
         int check;
         check = polxvec_iszero_constcoeff (hix, 0);
@@ -815,6 +826,7 @@ rej_loop1:
         polzvec_topolxvec (gx, &g[i], 0, 1, 1);
         polxvec_add (hix, hix, gx); // add uniform mask with ct=0
         polxvec_bindec (&sout[pp->off[HHAT] + i*LOGQ], hix, 1, LOGQ);
+        free (zqview[i]->lin->off);
     }
 
     polxvec_init_subvec2 (sv, sxl, pp->off[HHAT], 1, pp->len[HHAT]);
@@ -1328,15 +1340,27 @@ static void lnp_addcheck_finalcnst (sparsecnst cfinalcnst, polx cx, const sparse
     // scale linear part by c^2 that corresponds to xbin
     // (xbin is not part of the masked openings)
     // scale constant term by c^2
-    sparsecnst_copy2 (cfinalcnst, finalcnst, 4*5);
+    sparsecnst_init (cfinalcnst, finalcnst->b->len);
+    quadfunc_init (cfinalcnst->quad, finalcnst->quad->len, 4*5);
+    for (i = 0; i < finalcnst->quad->len; i++) {
+        cfinalcnst->quad->rows[i] = finalcnst->quad->rows[i];
+        cfinalcnst->quad->cols[i] = finalcnst->quad->cols[i];
+        polx_copy (cfinalcnst->quad->coeffs[i], finalcnst->quad->coeffs[i]);
+    }
+    linfunc_init (cfinalcnst->lin, 1, 1, 1);
+    cfinalcnst->lin->off[0] = finalcnst->lin->off[0];
+    polxvec_init (cfinalcnst->lin->phi[0], pp->wtlen, 1);
+    polxvec_copy (cfinalcnst->b, finalcnst->b);
 
     // phi[0] already matches the output layout because sxl uses merged layout
     // and ist positions were translated on the fly during aggregation.
     polx_mul (cx2, cx, cx);
     polxvec_init_subvec2 (__t, cfinalcnst->lin->phi[0], 0, 1, pp->wtlen - pp->xbinlen);
-    polxvec_polx_mul (__t, cx, __t);
+    polxvec_init_subvec2 (__s, finalcnst->lin->phi[0], 0, 1, pp->wtlen - pp->xbinlen);
+    polxvec_polx_mul (__t, cx, __s);
     polxvec_init_subvec2 (__t, cfinalcnst->lin->phi[0], pp->wtlen - pp->xbinlen, 1, pp->xbinlen);
-    polxvec_polx_mul (__t, cx2, __t);
+    polxvec_init_subvec2 (__s, finalcnst->lin->phi[0], pp->wtlen - pp->xbinlen, 1, pp->xbinlen);
+    polxvec_polx_mul (__t, cx2, __s);
     polxvec_refresh (cfinalcnst->lin->phi[0]);
 
     polxvec_polx_mul (cfinalcnst->b, cx, cfinalcnst->b);
@@ -2159,10 +2183,10 @@ static void lnp_projection_cnsts (
   const polz *zp,
   uint8_t h[16]
 ) {
-  size_t i, v0off, umoff, ybits, si_pos_merged;
+  size_t i, v0off, umoff, ybits, si_pos_merged, a, e, n;
   int64_t *chalz, *chalz_si;
   polxvec phip, phiy, phiu, sv, phiv0, zpx, cx, phit, phiw, b;
-  polxvec phip_si[LNP_NPROJ];
+  polxvec phip_si[LNP_NPROJ], phiseg[LNP_NPROJ];
 
   // projection of (w,t): c*Pi*(w,t) + c*y = z
   // y needs to be recomposed from binary yhat
@@ -2213,12 +2237,29 @@ static void lnp_projection_cnsts (
   // projection of si: c*Pi*si + c*ui = c*2^ki*wi - c*2^ki*ti + c*v0i
   // ui,v0i need to be recomposed from binary yhat
 
-  chalz_si = _malloc(LNP_NPROJ * 256 * sizeof(int64_t));
+  chalz_si = _malloc(2 * LNP_NPROJ * 256 * sizeof(int64_t));
   for (i = 0; i < LNP_NPROJ; i++) {
     sample_chalz (&chalz_si[256 * i], 256, h);
-    polxvec_init (phip_si[i], pp->silen_max, 1);
+    polxvec_init (phip_si[i], pp->silen[i], 1);
   }
-  jl_aggregate_mat (phip_si, LNP_NPROJ, jlmat1, jlmat2, chalz_si);
+  for (a = 0; ; a = e) {
+    e = a;
+    for (i = 0; i < LNP_NPROJ; i++)
+      if (pp->silen[i] > a && (e == a || pp->silen[i] < e))
+        e = pp->silen[i];
+    if (e == a)
+      break;
+    n = 0;
+    for (i = 0; i < LNP_NPROJ; i++) {
+      if (pp->silen[i] > a) {
+        polxvec_init_subvec2 (phiseg[n], phip_si[i], a, 1, e - a);
+        memcpy (&chalz_si[256 * (LNP_NPROJ + n)], &chalz_si[256 * i], 256 * sizeof(int64_t));
+        n++;
+      }
+    }
+    jl_aggregate_mat (phiseg, n, &jlmat1[a * 256 * N / 8], &jlmat2[a * 256 * N / 8],
+                      &chalz_si[256 * LNP_NPROJ]);
+  }
 
   polxvec_init (phit, 256 / N, 1);
   polxvec_init (phiw, 256 / N, 1);
@@ -2480,8 +2521,9 @@ static void lnp_aggregate_rq(
   uint8_t h[16]
 )
 {
-  size_t nchalx;
+  size_t i, nchalx;
   polxvec chalx, chalx_sv;
+  sparsecnst zqview[LIFTS];
 
   nchalx = ist->rqcnst->sparse_nchal + ist->rqcnst->com_nchal;
   polxvec_init (chalx, nchalx + LIFTS, 1);
@@ -2498,10 +2540,16 @@ static void lnp_aggregate_rq(
   polxvec_init_subvec2 (chalx_sv, chalx, 0, 1, nchalx);
   rqcnstset_aggregate_add (finalcnst, ist->rqcnst, chalx_sv);
 
+  for (i = 0; i < LIFTS; i++)
+    lnp_sparsecnst_nonzero_view (zqview[i], zqagg[i]);
   polxvec_init_subvec2 (chalx_sv, chalx, nchalx, 1, LIFTS);
-  sparsecnst_aggregate_add (finalcnst, zqagg, LIFTS, chalx_sv, NULL, 1);
+  sparsecnst_aggregate_add (finalcnst, zqview, LIFTS, chalx_sv, NULL, 1);
+  for (i = 0; i < LIFTS; i++)
+    free (zqview[i]->lin->off);
 
-  lnp_sparsecnst_refresh_nonzero (finalcnst);
+  lnp_sparsecnst_nonzero_view (zqview[0], finalcnst);
+  sparsecnst_refresh (zqview[0]);
+  free (zqview[0]->lin->off);
 
   polxvec_free (chalx);
 }
