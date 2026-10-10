@@ -553,7 +553,7 @@ void ldd_prove(
   polx *chalx_amortize;
   polxvec sxl, sxl_jl, sxq[pp->r], sxq_old[ist->r], phi[pp->r];
   polxvec tx, u1x, tgd, U1, u1d, Up, projd, projx, liftx, liftd, Ub, u2x, hd;
-  polxvec chalx_zq, U2, u2d, zx;
+  polxvec chalx_zq, U2, u2d, zx, sx_sv, jl_sv;
   polxvec jl_sprod_sx[LIFTS][pp->r], jlmat_agg[LIFTS], phi_jlproj[LIFTS];
   polxvec phi_jlproj_full[LIFTS];
   sparsecnst zqagg[LIFTS], finalcnst;
@@ -756,12 +756,26 @@ void ldd_prove(
 
   for(i=0;i<LIFTS;i++){
     for(j=0;j<pp->r;j++){
-      polxvec_init_subvec(jlmat_agg[i], jlmat_agg[i], 0, 1, pp->n[j]);
       polxvec_init(jl_sprod_sx[i][j], 1, 1);
-      polxvec_sprod(jl_sprod_sx[i][j], jlmat_agg[i], sxq[j]);
+      polxvec_setzero(jl_sprod_sx[i][j], 0, 1, 1);
+    }
+  }
+  for(off=0;off<pp->nmax;off+=32){
+    for(j=0;j<pp->r;j++){
+      if(off >= pp->n[j]){
+        continue;
+      }
+      polxvec_init_subvec2(sx_sv, sxq[j], off, 1, MIN(32, pp->n[j] - off));
+      for(i=0;i<LIFTS;i++){
+        polxvec_init_subvec2(jl_sv, jlmat_agg[i], off, 1, sx_sv->len);
+        polxvec_sprod_add(jl_sprod_sx[i][j], jl_sv, sx_sv);
+      }
+    }
+  }
+  for(i=0;i<LIFTS;i++){
+    for(j=0;j<pp->r;j++){
       polxvec_refresh(jl_sprod_sx[i][j]);
     }
-    polxvec_init_subvec(jlmat_agg[i], jlmat_agg[i], 0, 1, 0);
   }
 
   timing_end(&time);
