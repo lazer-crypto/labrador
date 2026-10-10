@@ -630,7 +630,7 @@ static inline __m512i crt_alpha(__m512i al[K], const __m512i x[K], const struct 
 
   s = _mm512_set1_epi16(1024);
   for(i=0;i<K;i++) {
-    al[i] = _mm512_min_epu16(x[i],_mm512_add_epi16(x[i],c->p[i]));
+    al[i] = _mm512_min_epu16(x[i],_mm512_sub_epi16(x[i],c->p[i]));
     s = _mm512_add_epi16(s,_mm512_mulhi_epi16(al[i],c->v[i]));
   }
   return _mm512_srli_epi16(s,11);
@@ -774,8 +774,10 @@ static void crtpolx(polz r, const poly *a[K], int center, const struct crtdata *
   poly b[K];
   __m512i x[2][K],al[2][K],k[2],t[2][L];
 
-  for(i=0;i<K;i++)
-    poly_invntt_scale(b[i],*a[i],primes[i]->t,primes[i]);
+  for(i=0;i+1<K;i+=2)
+    poly_invntt_crt2(b[i],b[i+1],*a[i],*a[i+1],i,i+1);
+  if(K&1)
+    poly_invntt_crt(b[K-1],*a[K-1],K-1);
 
   for(j=0;j<N/32;j+=2) {
     for(i=0;i<K;i++) {
@@ -889,8 +891,11 @@ static void refreshpolx(poly *a[K], const struct crtdata *c) {
   for(i=0;i<K;i++) {
     p[i] = _mm512_set1_epi16(primes[i]->p);
     pinvt4[i] = _mm512_slli_epi16(_mm512_set1_epi16(primes[i]->pinv),2);
-    poly_invntt_scale(b[i],*a[i],primes[i]->t,primes[i]);
   }
+  for(i=0;i+1<K;i+=2)
+    poly_invntt_crt2(b[i],b[i+1],*a[i],*a[i+1],i,i+1);
+  if(K&1)
+    poly_invntt_crt(b[K-1],*a[K-1],K-1);
 
   for(j=0;j<N/32;j+=2) {
     for(i=0;i<K;i++) {

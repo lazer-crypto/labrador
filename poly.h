@@ -62,7 +62,8 @@ void poly_ntt2(poly r0, poly r1, const poly a0, const poly a1, const pdata prime
 void poly_ntt_scale2(poly r0, poly r1, const poly a0, const poly a1, int16_t s0, int16_t s1, const pdata prime0, const pdata prime1);
 void polyvec_ntt(poly *r, const poly *a, ssize_t stride_r, ssize_t stride_a, size_t len, const pdata prime);
 void poly_invntt(poly r, const poly a, const pdata prime);
-void poly_invntt_scale(poly r, const poly a, int16_t s, const pdata prime);
+void poly_invntt_crt(poly r, const poly a, size_t i);
+void poly_invntt_crt2(poly r0, poly r1, const poly a0, const poly a1, size_t i0, size_t i1);
 void polyvec_invntt(poly *r, const poly *a, ssize_t stride_r, ssize_t stride_a, size_t len, const pdata prime);
 void poly_nttunpack(poly r, const pdata prime);
 void polyvec_ntt_interleaved(poly *r, const poly *a, ssize_t stride_r, ssize_t stride_a, size_t len, const pdata prime);
