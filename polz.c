@@ -559,7 +559,6 @@ static void crt_init(struct crtdata *c, int center) {
   size_t i,j;
   int64_t b,s;
   int64_t amax[K],smax[L];
-  const int64_t q = ((int64_t)1 << LOGQ) - QOFF;
   const int cap[3] = {3,2,1};
   __m512i k,u;
 
@@ -595,11 +594,10 @@ static void crt_init(struct crtdata *c, int center) {
     smax[j] = s;
     b >>= 14;
   }
-  s = smax[0] + (0x3FFF << 14);
-  assert(smax[1] < ((int64_t)1 << 31) && smax[2] < ((int64_t)1 << 31) && s < ((int64_t)1 << 31));
-  s += ((smax[2] + (smax[1] >> 14)) >> (LOGQ-28))*QOFF;
+  s = smax[0] + (0x3FFF << 14) + ((smax[2] + (smax[1] >> 14)) >> (LOGQ-28))*QOFF;
+  assert(smax[1] < ((int64_t)1 << 31) && smax[2] < ((int64_t)1 << 31) && s + QOFF < ((int64_t)1 << 31));
   s = ((int64_t)1 << (LOGQ-28)) + (s >> 28) + 1;
-  assert(s <= (center ? (q + ((int64_t)1 << (LOGQ-1))) >> 28 : 2*q >> 28));
+  assert(s <= (((int64_t)1 << LOGQ) - QOFF + (center ? (int64_t)1 << (LOGQ-1) : ((int64_t)1 << LOGQ) - QOFF)) >> 28);
 }
 
 static inline __m512i crt_alpha(__m512i al[K], const __m512i x[K], const struct crtdata *c) {
@@ -662,11 +660,9 @@ static inline int crt_sum(__m512i r[L], const __m512i al[K], __m512i k, int cent
     lo = _mm512_add_epi32(lo,f);
 #endif
     f = _mm512_srli_epi32(lo,28);
-    hi = _mm512_add_epi32(hi,f);
-    lo = _mm512_and_si512(lo,m28);
-
     if(center) {
-      m = _mm512_cmpgt_epi32_mask(hi,_mm512_srli_epi32(mhi,1));
+      f = _mm512_add_epi32(f,hi);
+      m = _mm512_cmpgt_epi32_mask(f,_mm512_srli_epi32(mhi,1));
       f = _mm512_mask_blend_epi32(m,_mm512_set1_epi32(-(QOFF-1)/2),_mm512_set1_epi32((QOFF+1)/2));
       lo = _mm512_add_epi32(lo,f);
       hi = _mm512_mask_sub_epi32(hi,m,hi,_mm512_set1_epi32(1 << (LOGQ-28)));
@@ -677,6 +673,8 @@ static inline int crt_sum(__m512i r[L], const __m512i al[K], __m512i k, int cent
       t[h][1] = _mm512_and_si512(f,m14);
     }
     else {
+      hi = _mm512_add_epi32(hi,f);
+      lo = _mm512_and_si512(lo,m28);
       f = _mm512_add_epi32(lo,qoff);
       s[0] = _mm512_srli_epi32(f,28);
       s[0] = _mm512_add_epi32(s[0],hi);

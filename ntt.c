@@ -377,9 +377,9 @@ level1:
 
 level0:
   if(scale) {
-    sc = _mm512_set1_epi16(modp(montmul(s,1,prime),prime));
+    sc = _mm512_set1_epi16(montmul(s,1,prime));
     sc_pinv = _mm512_mullo_epi16(sc,pinv);
-    zeta = _mm512_set1_epi16(modp(montmul(s,prime->zetas->c[1],prime),prime));
+    zeta = _mm512_set1_epi16(montmul(s,prime->zetas->c[1],prime));
     zeta_pinv = _mm512_mullo_epi16(zeta,pinv);
   }
   else {
