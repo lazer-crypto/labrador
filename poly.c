@@ -809,6 +809,31 @@ void polyvec_poly_pointwise_add(poly *r, const poly a, const poly *b,
   }
 }
 
+static inline void polyvec_sprod_add_pair(__m512i *z, const poly *a, const poly *b,
+                                          ssize_t stride_z, ssize_t stride_a, ssize_t stride_b)
+{
+  size_t i;
+ __m512i f,g,h,k,u,v;
+  const __mmask32 alt = _cvtu32_mask32(0x55555555);
+
+  for(i=0;i<N/32;i++) {
+    g = _mm512_load_si512(&a[stride_a]->v[i]);
+    k = _mm512_load_si512(&b[stride_b]->v[i]);
+    f = _mm512_load_si512(&a[0]->v[i]);
+    h = _mm512_load_si512(&b[0]->v[i]);
+    u = _mm512_slli_epi32(g,16);
+    v = _mm512_slli_epi32(k,16);
+    u = _mm512_mask_mov_epi16(u,alt,f);  // FIXME: blend
+    v = _mm512_mask_mov_epi16(v,alt,h);
+    z[(2*i+0)*stride_z] = _mm512_dpwssd_epi32(z[(2*i+0)*stride_z],u,v);
+    u = _mm512_srli_epi32(f,16);
+    v = _mm512_srli_epi32(h,16);
+    u = _mm512_mask_mov_epi16(g,alt,u);
+    v = _mm512_mask_mov_epi16(k,alt,v);
+    z[(2*i+1)*stride_z] = _mm512_dpwssd_epi32(z[(2*i+1)*stride_z],u,v);
+  }
+}
+
 static inline void reduce_mul_add(__m512i *r, const __m512i *a, const __m512i *b, const __m512i x, size_t len,
                                   const pdata prime)
 {
@@ -869,27 +894,33 @@ static __m512i poly_table16(const pdata prime) {
 
 static __m512i tables[2][K];
 
-static void tables_init(void) {
+static size_t tables_index(const pdata prime) {
   size_t k;
   static int init;
 
-  if(init)
-    return;
-  for(k=0;k<K;k++) {
-    tables[0][k] = sprod_pairs_table(primes[k]);
-    tables[1][k] = poly_table16(primes[k]);
+  if(!init) {
+    for(k=0;k<K;k++) {
+      tables[0][k] = sprod_pairs_table(primes[k]);
+      tables[1][k] = poly_table16(primes[k]);
+    }
+    init = 1;
   }
-  init = 1;
+  for(k=0;k<K;k++)
+    if(prime == primes[k])
+      return k;
+  return K;
 }
 
 static __m512i sprod_pairs_cached(const pdata prime) {
-  tables_init();
-  return tables[0][prime - primes[0]];
+  size_t k = tables_index(prime);
+
+  return (k < K) ? tables[0][k] : sprod_pairs_table(prime);
 }
 
 static __m512i poly_table16_cached(const pdata prime) {
-  tables_init();
-  return tables[1][prime - primes[0]];
+  size_t k = tables_index(prime);
+
+  return (k < K) ? tables[1][k] : poly_table16(prime);
 }
 
 static inline __m512i poly_reduce16(__m512i f, __m512i tab) {
@@ -941,8 +972,8 @@ static inline void polyvec_interleave(__m512i *aa, const poly *a0, const poly *a
   }
 }
 
-static const __m512i *poly_xx_cached(const pdata prime) {
-  size_t k;
+static void poly_xx(__m512i *r, const pdata prime) {
+  size_t i,k;
   poly x;
   static int init;
   __attribute__((aligned(64)))
@@ -955,7 +986,15 @@ static const __m512i *poly_xx_cached(const pdata prime) {
     }
     init = 1;
   }
-  return xx[prime - primes[0]];
+  for(k=0;k<K;k++) {
+    if(prime == primes[k]) {
+      for(i=0;i<N/16;i++)
+        r[i] = xx[k][i];
+      return;
+    }
+  }
+  poly_monomial_ntt(x,1,1,prime);
+  polyvec_interleave(r,&x,NULL,1,1,0,prime);
 }
 
 static inline void polyvec_interleave_reduce(poly *r, __m512i *a, ssize_t stride, size_t len, const pdata prime) {
@@ -1045,13 +1084,15 @@ static void sprod_pairs_finish(poly r, const __m512i *z0, const __m512i *z1, siz
   }
 }
 
-static inline void sprod_step(__m512i *z, const poly *a0, const poly *a1, const poly *b0, const poly *b1) {
+static inline void sprod_step(__m512i *z, const poly *a0, const poly *a1, const poly *b0, const poly *b1,
+                              __m512i tab)
+{
   size_t i;
   __m512i f,g,h,k;
 
   for(i=0;i<N/32;i++) {
-    f = _mm512_load_si512(&a0[0]->v[i]);
-    g = _mm512_load_si512(&a1[0]->v[i]);
+    f = poly_reduce16(_mm512_load_si512(&a0[0]->v[i]),tab);
+    g = poly_reduce16(_mm512_load_si512(&a1[0]->v[i]),tab);
     h = _mm512_load_si512(&b0[0]->v[i]);
     k = _mm512_load_si512(&b1[0]->v[i]);
     z[2*i+0] = _mm512_dpwssd_epi32(z[2*i+0],_mm512_unpacklo_epi16(f,g),_mm512_unpacklo_epi16(h,k));
@@ -1059,13 +1100,13 @@ static inline void sprod_step(__m512i *z, const poly *a0, const poly *a1, const 
   }
 }
 
-static inline void sprod_step1(__m512i *z, const poly *a0, const poly *b0) {
+static inline void sprod_step1(__m512i *z, const poly *a0, const poly *b0, __m512i tab) {
   size_t i;
   __m512i f,h;
   const __m512i zero = _mm512_setzero_si512();
 
   for(i=0;i<N/32;i++) {
-    f = _mm512_load_si512(&a0[0]->v[i]);
+    f = poly_reduce16(_mm512_load_si512(&a0[0]->v[i]),tab);
     h = _mm512_load_si512(&b0[0]->v[i]);
     z[2*i+0] = _mm512_dpwssd_epi32(z[2*i+0],_mm512_unpacklo_epi16(f,zero),_mm512_unpacklo_epi16(h,zero));
     z[2*i+1] = _mm512_dpwssd_epi32(z[2*i+1],_mm512_unpackhi_epi16(f,zero),_mm512_unpackhi_epi16(h,zero));
@@ -1075,29 +1116,29 @@ static inline void sprod_step1(__m512i *z, const poly *a0, const poly *b0) {
 void polyvec_sprod_pointwise(poly r, const poly *a, const poly *b,
                              ssize_t stride_a, ssize_t stride_b, size_t len, const pdata prime)
 {
-  size_t i,j;
-  __m512i z[N/16];
-  const __m512i tab = sprod_pairs_cached(prime);
+  size_t i,j,k;
+  __m512i z[N/16], tab, t16;
 
   if(len == 1) {
     poly_pointwise(r,a[0],b[0],prime);
     poly_reduce(r,prime);
     return;
   }
+  k = tables_index(prime);
+  tab = (k < K) ? tables[0][k] : sprod_pairs_table(prime);
+  t16 = (k < K) ? tables[1][k] : poly_table16(prime);
   for(i=0;i<N/16;i++)
     z[i] = _mm512_setzero_si512();
-  for(j=0;j+4<=len;j+=4) {
-    sprod_step(z,&a[stride_a*j],&a[stride_a*(j+1)],&b[stride_b*j],&b[stride_b*(j+1)]);
-    sprod_step(z,&a[stride_a*(j+2)],&a[stride_a*(j+3)],&b[stride_b*(j+2)],&b[stride_b*(j+3)]);
+  for(j=0;j+6<=len;j+=6) {
+    for(k=j;k<j+6;k+=2)
+      sprod_step(z,&a[stride_a*k],&a[stride_a*(k+1)],&b[stride_b*k],&b[stride_b*(k+1)],t16);
     for(i=0;i<N/16;i++)
       z[i] = sprod_pairs_reduce(z[i],tab);
   }
-  if(j+2 <= len) {
-    sprod_step(z,&a[stride_a*j],&a[stride_a*(j+1)],&b[stride_b*j],&b[stride_b*(j+1)]);
-    j += 2;
-  }
+  for(;j+2<=len;j+=2)
+    sprod_step(z,&a[stride_a*j],&a[stride_a*(j+1)],&b[stride_b*j],&b[stride_b*(j+1)],t16);
   if(j < len)
-    sprod_step1(z,&a[stride_a*j],&b[stride_b*j]);
+    sprod_step1(z,&a[stride_a*j],&b[stride_b*j],t16);
   for(i=0;i<N/16;i++)
     z[i] = sprod_pairs_reduce(z[i],tab);
   sprod_pairs_finish(r,z,NULL,1,prime);
@@ -1316,8 +1357,7 @@ void polyvec_sprod_extension(poly *c, const poly *a, const poly *b,
                              const pdata prime)
 {
   size_t i,j;
-  const __m512i *xx;
-  __m512i aa[2*deg*N/32], bb[2*deg*N/32], cc[2*clen*N/32], tab;
+  __m512i aa[2*deg*N/32], bb[2*deg*N/32], cc[2*clen*N/32], xx[N/16], tab;
   const __m512i zero = _mm512_setzero_si512();
 
   /* shortcut */
@@ -1328,7 +1368,7 @@ void polyvec_sprod_extension(poly *c, const poly *a, const poly *b,
 
   for(i=0;i<clen*N/16;i++)
     _mm512_store_si512(&cc[i],zero);
-  xx = poly_xx_cached(prime);
+  poly_xx(xx,prime);
   tab = sprod_pairs_cached(prime);
   while(blen >= 2*deg) {
     polyvec_interleave(aa,&a[0],&a[stride_a*deg],stride_a,deg,deg,prime);
@@ -1391,6 +1431,37 @@ void polyvec_collaps_add_extension(poly *c, const poly *b, const poly *a,
     c += l*stride_c;
     a += 2*deg*stride_a;
     clen -= l;
+  }
+}
+
+static void polyvec_pairwise_sprod_add_pair(__m512i *g, const poly *a, const poly *b,
+                                            size_t m, size_t n, size_t r, size_t s, int triag)
+{
+  size_t k,l;
+
+  if(!r || !s) {
+    return;
+  }
+  else if(r == 1 && s == 1) {
+    polyvec_sprod_add_pair(g,a,b,m,1,1);
+    return;
+  }
+
+  k = (r+1)/2;
+  l = (s+1)/2;
+  if(triag) {
+    // r == s
+    polyvec_pairwise_sprod_add_pair(&g[0],&a[0*n],&b[0*n],m,n,k,k,1);
+    polyvec_pairwise_sprod_add_pair(&g[(k*k+k)/2],&a[k*n],&b[k*n],m,n,r-k,r-k,1);
+    polyvec_pairwise_sprod_add_pair(&g[(k*k+(r-k)*(r-k)+r)/2],&a[0*n],&b[k*n],m,n,k,r-k,0);
+    if(a != b)
+      polyvec_pairwise_sprod_add_pair(&g[(k*k+(r-k)*(r-k)+r)/2],&a[k*n],&b[0*n],m,n,r-k,k,0);
+  }
+  else {
+    polyvec_pairwise_sprod_add_pair(&g[0],&a[0*n],&b[0*n],m,n,k,l,0);
+    polyvec_pairwise_sprod_add_pair(&g[k*l],&a[k*n],&b[l*n],m,n,r-k,s-l,0);
+    polyvec_pairwise_sprod_add_pair(&g[k*l+(r-k)*(s-l)],&a[0*n],&b[l*n],m,n,k,s-l,0);
+    polyvec_pairwise_sprod_add_pair(&g[k*l+(r-k)*(s-l)+k*(s-l)],&a[k*n],&b[0*n],m,n,r-k,l,0);
   }
 }
 
@@ -1468,43 +1539,41 @@ void polyvec_pairwise_pointwise(poly *g, const poly *a, const poly *b,
   }
 }
 
-void polyvec_pairwise_sprod(poly *g, const poly *a, const poly *b, size_t r, size_t n, const pdata prime) {
-  size_t i,j,k,l;
-  size_t *la;
-  ssize_t *st;
-  const poly **pa, **pb;
-  poly *t;
-  const size_t m = (r*r+r)/2;
+static void polyvec_pairwise_doubleoffdiag(poly *g, size_t r, const pdata prime) {
+  size_t k;
 
-  if(!r)
+  if(r <= 1)
     return;
-  la = _malloc(r*(sizeof(size_t) + sizeof(ssize_t) + 2*sizeof(poly*)));
-  st = (ssize_t*)&la[r];
-  pa = (const poly**)&st[r];
-  pb = &pa[r];
-  for(i=0;i<r;i++) {
-    la[i] = n;
-    st[i] = 1;
-    pa[i] = &a[i*n];
-    pb[i] = &b[i*n];
+
+  k = (r+1)/2;
+  polyvec_pairwise_doubleoffdiag(&g[0],k,prime);
+  polyvec_pairwise_doubleoffdiag(&g[(k*k+k)/2],r-k,prime);
+  g += (k*k+(r-k)*(r-k)+r)/2;
+  polyvec_add(g,g,g,1,1,1,(r-k)*k);
+  polyvec_reduce(g,1,(r-k)*k,prime);
+}
+
+void polyvec_pairwise_sprod(poly *g, const poly *a, const poly *b, size_t r, size_t n, const pdata prime) {
+  size_t i,j;
+  size_t k = floor(pow(ldexp(1/3.2,31)/(prime->p*prime->p),2));
+  const size_t m = (r*r+r)/2;
+  __m512i *z;
+  const __m512i mont = _mm512_set1_epi32(prime->mont);
+
+  z = _aligned_calloc(64,2*N/32*m*sizeof(__m512i));
+  for(j=0;(k=MIN(k,n-j)&~1);j+=k) {
+    for(i=j;i<j+k;i+=2)
+      polyvec_pairwise_sprod_add_pair(z,&a[i],&b[i],m,n,r,r,1);
+    reduce_mul_add(z,NULL,z,mont,2*N/32*m,prime);
   }
-  t = _aligned_alloc(64,m*sizeof(poly));
-  polyvec_sprod_pairs(t,1,pa,(a == b) ? NULL : pb,la,la,st,st,r,prime);
-  l = 0;
-  for(i=0;i<r;i++) {
-    for(j=i;j<r;j++) {
-      k = pwidx(i,j,r);
-      if(a == b && i != j) {
-        poly_add(g[k],t[l],t[l]);
-        poly_reduce(g[k],prime);
-      }
-      else
-        polyvec_copy(&g[k],&t[l],1,1,1);
-      l += 1;
-    }
+  polyvec_interleave_reduce(g,z,1,m,prime);
+  if(n & 1) {
+    polyvec_pairwise_pointwise((poly*)z,&a[n-1],&b[n-1],1,n,n,r,r,prime);
+    polyvec_add(g,g,(poly*)z,1,1,1,m);
+    polyvec_reduce(g,1,m,prime);
   }
-  free(t);
-  free(la);
+  if(a == b)
+    polyvec_pairwise_doubleoffdiag(g,r,prime);
 }
 
 #define SPROD_PAIRS_STEPS 32
