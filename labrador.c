@@ -51,6 +51,7 @@ void ldr_aggregate_zq(
     polxvec_init(zqagg[i]->lin->phi[0], nn, 1);
 
     jl_aggregate_mat(zqagg[i]->lin->phi[0], jlmat1, jlmat2, cz);
+    polxvec_setwidths1(zqagg[i]->lin->phi[0], 0, 1, nn, 16*WIDTHMOD(LOGQ));
     proj = jlproj_collapsproj(p, cz);
     polxvec_monomial(zqagg[i]->b, 0, 0, proj);
   }
@@ -248,7 +249,7 @@ void ldr_prove(
   // Input witness to polx
 
   polxvec_init(sxl, pp->nn, 1);
-  polxvec_frompolyvec(sxl, sy[0], 1, pp->nn, pp->normsq_global/(pp->nn*N));
+  polxvec_frompolyvec(sxl, sy[0], 1, pp->nn, (double)pp->normsq_global/(pp->nn*N));
   
   off = 0;
   for(i=0;i<pp->r;i++){
@@ -435,6 +436,7 @@ int ldr_reduce(
 
   polxvec_init(liftx, LIFTS, 1);
   polzvec_topolxvec(liftx, pi->m[2], 0, 1, LIFTS);
+  polxvec_setwidths1(liftx, 0, 1, LIFTS, 4*WIDTHMOD(LOGQ));
 
   for(i=0;i<LIFTS;i++){
     polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);

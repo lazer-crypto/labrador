@@ -529,7 +529,7 @@ void ldd_prove(
   
   off = 0;
   for(i=0;i<pp->r;i++){
-    polxvec_setwidths1(sxl, off, 1, pp->n[i], pp->normsq[i]/(pp->n[i]*N));
+    polxvec_setwidths1(sxl, off, 1, pp->n[i], (double)pp->normsq[i]/(pp->n[i]*N));
     polxvec_init_subvec2(sxq[i], sxl, off, 1, pp->n[i]);
     off += pp->n[i];
   }

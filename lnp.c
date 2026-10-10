@@ -423,7 +423,7 @@ void lnp_prove(lnp_proof pi, statement ost, witness owt, const statement ist, co
     off = 0;
     for (i = 0; i < 5; i++) {
       polxvec_init_subvec (stildex, iwtx, off, 1, iwt->n[i]);
-      polxvec_frompolyvec (stildex, iwt->s[i], 1, iwt->n[i], 1);
+      polxvec_frompolyvec (stildex, iwt->s[i], 1, iwt->n[i], MAX(1.0, (double)ist->normsq[i]/(iwt->n[i]*N)));
       off += iwt->n[i];
     }
 
@@ -701,6 +701,7 @@ rej_loop1:
     polxvec __t;
     // yxl spans the uniform block of the merged layout (includes z2 gap inside Z1LO).
     polxvec_init (yxl, pp->off[Z1S11], 1);
+    polxvec_setzero (yxl, 0, 1, yxl->len);
     polxvec_init (y2sx_bak, pp->rslen, 1);
     polxvec_init (sxl, pp->wtlen, 1);
     polxvec_init (hix, 1, 1);
@@ -2141,7 +2142,7 @@ static void lnp_projection_cnsts (
   polxvec_neg (phiy, phiy); // because jl_aggregate_proj does -sigmam1()
   
   polzvec_topolxvec (zpx, zp, 0, 1, 256 / N);
-  polxvec_fromint64vec2 (cx, chalz, 256 / N, 1, 1); // does this work for N < 256?
+  polxvec_fromint64vec2 (cx, chalz, 256 / N, 1, int64vec_width(chalz, 256 / N, 1)); // does this work for N < 256?
   polxvec_sigmam1 (cx, cx);
   polxvec_sprod (b, cx, zpx);
 
@@ -2192,7 +2193,7 @@ static void lnp_projection_cnsts (
   polxvec_copy (phiu, phiv0); // linear part corresponding to ui (part of s6)
   polxvec_neg (phiu, phiu); // because jl_aggregate_proj does -sigmam1()
 
-  polxvec_fromint64vec2 (phit, chalz, 256 / N, 1, 1);
+  polxvec_fromint64vec2 (phit, chalz, 256 / N, 1, int64vec_width(chalz, 256 / N, 1));
   polxvec_refresh (phit);
   polxvec_sigmam1 (phit, phit); // linear part corresponding to ti
   polxvec_scale (phit, phit, (int64_t)1 << pp->k[i]);

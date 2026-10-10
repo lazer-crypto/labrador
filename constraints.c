@@ -1359,7 +1359,11 @@ static void polxvec_sprod_guarded(polxvec r, const polxvec a, const polxvec b){
   double w, wj;
   polxvec a_sv, b_sv, ta, tb, t;
 
-  if(polxvec_sprod_width(a, b) <= MAXWIDTH){
+  w = 0;
+  for(i=0;i<a->len;i++){
+    w += sqrt(a->widths[i*a->stride]*b->widths[i*b->stride]);
+  }
+  if((double)N*N*w*w <= MAXWIDTH){
     polxvec_sprod(r, a, b);
     return;
   }
@@ -1368,8 +1372,8 @@ static void polxvec_sprod_guarded(polxvec r, const polxvec a, const polxvec b){
   for(i=0;i<a->len;i=j){
     w = 0;
     for(j=i;j<a->len;j++){
-      wj = N*a->widths[j*a->stride]*b->widths[j*b->stride];
-      if(w + wj > MAXWIDTH){
+      wj = sqrt(a->widths[j*a->stride]*b->widths[j*b->stride]);
+      if((double)N*N*(w + wj)*(w + wj) > MAXWIDTH){
         break;
       }
       w += wj;
