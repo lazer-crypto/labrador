@@ -801,7 +801,7 @@ void polxvec_scale_add(polxvec r, const polxvec a, int64_t s) {
   }
 }
 
-static size_t polxvec_sprod_extension_internal(polxvec c, const polxvec a, const polxvec b, int add) {
+static size_t polxvec_sprod_extension_internal(polxvec c, const polxvec a, const polxvec b, int add, int blocked) {
   size_t i,j,k;
   size_t deg;
   size_t off_a = 0;
@@ -836,7 +836,10 @@ static size_t polxvec_sprod_extension_internal(polxvec c, const polxvec a, const
     }
   }
   for(i=0;i<K;i++) {
-    if(!add)
+    if(!add && blocked)
+      polyvec_sprod_extension_blocked(c->proj[i],a->proj[i],b->proj[i],
+                                      c->stride,a->stride,b->stride,deg,c->len,b->len,primes[i]);
+    else if(!add)
       polyvec_sprod_extension(c->proj[i],a->proj[i],b->proj[i],
                               c->stride,a->stride,b->stride,deg,c->len,b->len,primes[i]);
     else {
@@ -850,11 +853,15 @@ static size_t polxvec_sprod_extension_internal(polxvec c, const polxvec a, const
 }
 
 size_t polxvec_sprod_extension(polxvec c, const polxvec a, const polxvec b){
-  return polxvec_sprod_extension_internal(c, a, b, 0);
+  return polxvec_sprod_extension_internal(c, a, b, 0, 0);
 }
 
 size_t polxvec_sprod_extension_add(polxvec c, const polxvec a, const polxvec b){
-  return polxvec_sprod_extension_internal(c, a, b, 1);
+  return polxvec_sprod_extension_internal(c, a, b, 1, 0);
+}
+
+size_t polxvec_sprod_extension_blocked(polxvec c, const polxvec a, const polxvec b){
+  return polxvec_sprod_extension_internal(c, a, b, 0, 1);
 }
 
 size_t polxvec_collaps_add_extension(polxvec c, const polxvec b, const polxvec a, size_t off_a) {

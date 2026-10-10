@@ -123,7 +123,7 @@ void commit(
   const polxvec in
 )
 {
-  polxvec_sprod_extension(out, comkey, in);
+  polxvec_sprod_extension_blocked(out, comkey, in);
 }
 
 /*
