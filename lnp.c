@@ -1030,38 +1030,26 @@ rej_loop2_outer:
     lnp_polzvec_fromint32 (z1, y1int, pp->stildelen + pp->vtildelen);
 
     // wsy1 = A1s_split * y1s
-    polxvec_init_subvec (y1sx, tmp1x, 0, 1, pp->stildelen);
-    polzvec_topolxvec (y1sx, z1s, 0, 1, pp->stildelen);
-
-    polxvec_init_subvec2(src_sv, y1sx, 0, 1, s123_len);
     polxvec_init_subvec2(dst_sv, yxl, pp->off[Z1S10], 1, s123_len);
-    polxvec_copy(dst_sv, src_sv);
-    polxvec_init_subvec2(src_sv, y1sx, s123_len, 1, s45_len);
-    polxvec_init_subvec2(dst_sv, yxl, pp->off[Z1S40], 1, s45_len);
-    polxvec_copy(dst_sv, src_sv);
-    polxvec_init_subvec2(src_sv, y1sx, pp->slen, 1, pp->silen[5]);
-    polxvec_init_subvec2(dst_sv, yxl, pp->off[Z1LO] + pp->silen[2], 1, pp->silen[5]);
-    polxvec_copy(dst_sv, src_sv);
+    polzvec_topolxvec(dst_sv, z1s, 0, 1, s123_len);
+    polxvec_init_subvec2(src_sv, yxl, pp->off[Z1S40], 1, s45_len);
+    polzvec_topolxvec(src_sv, z1s + s123_len, 0, 1, s45_len);
+    polxvec_init_subvec2(y1sx, yxl, pp->off[Z1LO] + pp->silen[2], 1, pp->silen[5]);
+    polzvec_topolxvec(y1sx, z1s + pp->slen, 0, 1, pp->silen[5]);
 
     ck_off = 0;
-    polxvec_init_subvec2(s_sv, y1sx, 0, 1, s123_len);
-    off = polxvec_sprod_extension(wsy1, comkey, s_sv);
+    off = polxvec_sprod_extension(wsy1, comkey, dst_sv);
     ck_off += off;
     polxvec_init_subvec2(ck_sv, comkey, ck_off, 1, comkey->len - ck_off);
-    polxvec_init_subvec2(s_sv, y1sx, s123_len, 1, s45_len);
-    off = polxvec_sprod_extension_add(wsy1, ck_sv, s_sv);
+    off = polxvec_sprod_extension_add(wsy1, ck_sv, src_sv);
     ck_off += off;
     polxvec_init_subvec2(ck_sv, comkey, ck_off, 1, comkey->len - ck_off);
-    polxvec_init_subvec2(s_sv, y1sx, s123_len + s45_len, 1, pp->silen[5]);
-    off = polxvec_sprod_extension_add(wsy1, ck_sv, s_sv);
+    off = polxvec_sprod_extension_add(wsy1, ck_sv, y1sx);
     ck_off += off;
     assert(ck_off == pp->a2soff);
 
-    polxvec_init_subvec (y1vx, tmp1x, 0, 1, pp->vtildelen);
+    polxvec_init_subvec2 (y1vx, yxl, pp->off[Z1V10], 1, pp->vtildelen);
     polzvec_topolxvec (y1vx, z1v, 0, 1, pp->vtildelen);
-
-    polxvec_init_subvec2 (__t, yxl, pp->off[Z1V10], 1, pp->vtildelen);
-    polxvec_copy (__t, y1vx); // populate yxl at merged v10|v20 slot
 
     // wvy1 = A1v * y1v
     off = polxvec_sprod_extension (wvy1, comkey, y1vx);
