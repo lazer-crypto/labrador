@@ -8,6 +8,8 @@
 #include "poly.h"
 #include "polz.h"
 
+#define SPROD_PAIRS_MAXR 64
+
 static int64_t cmodq(int64_t a) {
   int64_t t;
   const int64_t mask = ((int64_t)1 << LOGQ) - 1;
@@ -801,7 +803,7 @@ void polxvec_scale_add(polxvec r, const polxvec a, int64_t s) {
   }
 }
 
-static size_t polxvec_sprod_extension_internal(polxvec c, const polxvec a, const polxvec b, int add) {
+static size_t polxvec_sprod_extension_internal(polxvec c, const polxvec a, const polxvec b, int add, int blocked) {
   size_t i,j,k;
   size_t deg;
   size_t off_a = 0;
@@ -836,7 +838,10 @@ static size_t polxvec_sprod_extension_internal(polxvec c, const polxvec a, const
     }
   }
   for(i=0;i<K;i++) {
-    if(!add)
+    if(!add && blocked && deg > 1 && b->len >= 4*deg)
+      polyvec_sprod_extension_blocked(c->proj[i],a->proj[i],b->proj[i],
+                                      c->stride,a->stride,b->stride,deg,c->len,b->len,primes[i]);
+    else if(!add)
       polyvec_sprod_extension(c->proj[i],a->proj[i],b->proj[i],
                               c->stride,a->stride,b->stride,deg,c->len,b->len,primes[i]);
     else {
@@ -850,11 +855,15 @@ static size_t polxvec_sprod_extension_internal(polxvec c, const polxvec a, const
 }
 
 size_t polxvec_sprod_extension(polxvec c, const polxvec a, const polxvec b){
-  return polxvec_sprod_extension_internal(c, a, b, 0);
+  return polxvec_sprod_extension_internal(c, a, b, 0, 0);
 }
 
 size_t polxvec_sprod_extension_add(polxvec c, const polxvec a, const polxvec b){
-  return polxvec_sprod_extension_internal(c, a, b, 1);
+  return polxvec_sprod_extension_internal(c, a, b, 1, 0);
+}
+
+size_t polxvec_sprod_extension_blocked(polxvec c, const polxvec a, const polxvec b){
+  return polxvec_sprod_extension_internal(c, a, b, 0, 1);
 }
 
 size_t polxvec_collaps_add_extension(polxvec c, const polxvec b, const polxvec a, size_t off_a) {
@@ -919,6 +928,104 @@ size_t polxvec_pairwise_sprod(polxvec g, const polxvec a, const polxvec b, size_
   for(i=0;i<K;i++)
     polyvec_pairwise_sprod(g->proj[i],a->proj[i],b->proj[i],r,n,primes[i]);
   return m;
+}
+
+static double polxvec_sprod_width(const polxvec a, const polxvec b) {
+  size_t i;
+  double w = 0;
+  const size_t len = MIN(a->len,b->len);
+
+  for(i=0;i<len;i++)
+    w += N*a->widths[i*a->stride]*b->widths[i*b->stride];
+  return w;
+}
+
+static void polxvec_sprod_prefix(polxvec r, const polxvec a, const polxvec b, int add) {
+  polxvec a_sv, b_sv;
+  const size_t len = MIN(a->len,b->len);
+
+  if(!len) {
+    if(!add)
+      polxvec_setzero(r,0,1,1);
+    return;
+  }
+  polxvec_init_subvec2(a_sv,a,0,1,len);
+  polxvec_init_subvec2(b_sv,b,0,1,len);
+  if(add)
+    polxvec_sprod_add(r,a_sv,b_sv);
+  else
+    polxvec_sprod(r,a_sv,b_sv);
+}
+
+void polxvec_sprod_pairs(polxvec g, const polxvec a[], const polxvec b[], size_t r) {
+  size_t i,j,k;
+  size_t *la, *lb;
+  ssize_t *sa, *sb;
+  const poly **pa, **pb;
+  double *w;
+  polx t;
+  polxvec g_sv, t_sv;
+  const size_t m = (r*r+r)/2;
+
+  assert(g->len == m);
+  if(!r)
+    return;
+  if(r == 1 || r > SPROD_PAIRS_MAXR) {
+    t->width = 0;
+    polxvec_init_frompolx(t_sv,t);
+    k = 0;
+    for(i=0;i<r;i++) {
+      for(j=i;j<r;j++) {
+        polxvec_sprod_prefix(t_sv,a[i],(b) ? b[j] : a[j],0);
+        if(b && i != j)
+          polxvec_sprod_prefix(t_sv,a[j],b[i],1);
+        polxvec_init_subvec2(g_sv,g,k,1,1);
+        polxvec_copy(g_sv,t_sv);
+        k += 1;
+      }
+    }
+    return;
+  }
+
+  la = _malloc(r*(2*sizeof(size_t) + 2*sizeof(ssize_t) + 2*sizeof(poly*)) + m*sizeof(double));
+  lb = &la[r];
+  sa = (ssize_t*)&lb[r];
+  sb = &sa[r];
+  pa = (const poly**)&sb[r];
+  pb = &pa[r];
+  w = (double*)&pb[r];
+  for(i=0;i<r;i++) {
+    la[i] = a[i]->len;
+    sa[i] = a[i]->stride;
+    lb[i] = (b) ? b[i]->len : 0;
+    sb[i] = (b) ? b[i]->stride : 0;
+  }
+  if(g->widths) {
+    k = 0;
+    for(i=0;i<r;i++) {
+      for(j=i;j<r;j++) {
+        if(!b)
+          w[k] = polxvec_sprod_width(a[i],a[j]);
+        else if(i == j)
+          w[k] = polxvec_sprod_width(a[i],b[i]);
+        else
+          w[k] = polxvec_sprod_width(a[i],b[j]) + polxvec_sprod_width(a[j],b[i]);
+        k += 1;
+      }
+    }
+    for(k=0;k<m;k++) {
+      assert(w[k] <= MAXWIDTH);
+      g->widths[k*g->stride] = w[k];
+    }
+  }
+  for(k=0;k<K;k++) {
+    for(i=0;i<r;i++) {
+      pa[i] = a[i]->proj[k];
+      pb[i] = (b) ? b[i]->proj[k] : NULL;
+    }
+    polyvec_sprod_pairs(g->proj[k],g->stride,pa,(b) ? pb : NULL,la,lb,sa,(b) ? sb : NULL,r,primes[k]);
+  }
+  free(la);
 }
 
 void polx_bindec(poly *r, const polx a, ssize_t stride, size_t t) {

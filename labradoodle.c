@@ -255,35 +255,24 @@ static void ldd_ling(
   const int64_t chalz_jl[LIFTS][LIFTS*r]
 )
 {
-  polxvec hx, acc, phi_sv, sx_sv;
-  size_t i, j, len, hpos = 0;
+  polxvec hx, hx_sv, acc;
+  size_t i, j, hpos = 0;
 
-  polxvec_init(hx, 1, 1);
+  if(!r)
+    return;
+  polxvec_init(hx, (r*r+r)/2, 1);
   polxvec_init(acc, 1, 1);
 
+  polxvec_sprod_pairs(hx, phi, sx, r);
   for(i=0;i<r;i++){
     for(j=i;j<r;j++){
-      if(i == j){
-        polxvec_sprod(hx, phi[i], sx[i]);
-        ldd_ling_jl_add(hx, acc, i, i, r, chalz_jl, chalx_zq, jl_sprod_sx);
+      polxvec_init_subvec2(hx_sv, hx, hpos, 1, 1);
+      ldd_ling_jl_add(hx_sv, acc, i, j, r, chalz_jl, chalx_zq, jl_sprod_sx);
+      if(i != j){
+        ldd_ling_jl_add(hx_sv, acc, j, i, r, chalz_jl, chalx_zq, jl_sprod_sx);
       }
-      else{
-        len = MIN(phi[i]->len, sx[j]->len);
-        polxvec_init_subvec2(phi_sv, phi[i], 0, 1, len);
-        polxvec_init_subvec2(sx_sv, sx[j], 0, 1, len);
-        polxvec_sprod(hx, phi_sv, sx_sv);
-
-        len = MIN(phi[j]->len, sx[i]->len);
-        polxvec_init_subvec2(phi_sv, phi[j], 0, 1, len);
-        polxvec_init_subvec2(sx_sv, sx[i], 0, 1, len);
-        polxvec_sprod_add(hx, phi_sv, sx_sv);
-
-        ldd_ling_jl_add(hx, acc, i, j, r, chalz_jl, chalx_zq, jl_sprod_sx);
-        ldd_ling_jl_add(hx, acc, j, i, r, chalz_jl, chalx_zq, jl_sprod_sx);
-      }
-
-      polxvec_decompose(&hy[hpos], hx, 1, fu, bu);
-      hpos += fu;
+      polxvec_decompose(&hy[hpos*fu], hx_sv, 1, fu, bu);
+      hpos++;
     }
   }
   polxvec_free(hx);
