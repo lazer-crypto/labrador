@@ -21,6 +21,97 @@ static int64_t cmodq(int64_t a) {
   return a;
 }
 
+#define BIGBUFS 64
+#define BIGFREE 16
+#define BIGRATIO 4
+
+static struct {
+  void *p;
+  size_t size;
+  size_t stamp;
+  int busy;
+} bigbuf[BIGBUFS];
+static size_t bigclock;
+
+static size_t bigbuf_oldest(void) {
+  size_t i, j = BIGBUFS;
+
+  for(i=0;i<BIGBUFS;i++)
+    if(bigbuf[i].p && !bigbuf[i].busy && (j == BIGBUFS || bigbuf[i].stamp < bigbuf[j].stamp))
+      j = i;
+  return j;
+}
+
+static size_t bigbuf_evict(size_t j) {
+  free(bigbuf[j].p);
+  bigbuf[j].p = NULL;
+  return bigbuf[j].size;
+}
+
+static void *bigbuf_alloc(size_t size) {
+  size_t i, j, freed;
+  void *p;
+
+  if(size < HUGEPAGE || size > SIZE_MAX - (HUGEPAGE - 1))
+    return _aligned_alloc(64,size);
+
+  size = (size + HUGEPAGE - 1) & ~(HUGEPAGE - 1);
+  j = BIGBUFS;
+  for(i=0;i<BIGBUFS;i++)
+    if(bigbuf[i].p && !bigbuf[i].busy && bigbuf[i].size >= size && (j == BIGBUFS || bigbuf[i].size < bigbuf[j].size))
+      j = i;
+  if(j < BIGBUFS) {
+    bigbuf[j].busy = 1;
+    return bigbuf[j].p;
+  }
+
+  freed = 0;
+  while(freed < size && (j = bigbuf_oldest()) < BIGBUFS)
+    freed += bigbuf_evict(j);
+
+  p = _aligned_alloc(64,size);
+  for(i=0;i<BIGBUFS && bigbuf[i].p;i++);
+  if(i < BIGBUFS) {
+    bigbuf[i].p = p;
+    bigbuf[i].size = size;
+    bigbuf[i].busy = 1;
+  }
+  return p;
+}
+
+static void bigbuf_free(void *p, size_t size) {
+  size_t i, nfree, cached, busy;
+
+  if(size < HUGEPAGE) {
+    free(p);
+    return;
+  }
+  for(i=0;i<BIGBUFS && bigbuf[i].p != p;i++);
+  if(i == BIGBUFS) {
+    free(p);
+    return;
+  }
+  bigbuf[i].busy = 0;
+  bigbuf[i].stamp = bigclock++;
+
+  while(1) {
+    nfree = cached = busy = 0;
+    for(i=0;i<BIGBUFS;i++) {
+      if(!bigbuf[i].p)
+        continue;
+      if(bigbuf[i].busy)
+        busy += bigbuf[i].size;
+      else {
+        nfree += 1;
+        cached += bigbuf[i].size;
+      }
+    }
+    if(nfree <= BIGFREE && cached <= BIGRATIO*busy)
+      return;
+    bigbuf_evict(bigbuf_oldest());
+  }
+}
+
 void polxvec_init(polxvec r, size_t len, int widths) {
   size_t i;
   void *buf;
@@ -28,7 +119,11 @@ void polxvec_init(polxvec r, size_t len, int widths) {
   r->alloc = r->len = len;
   r->off = 0;
   r->stride = 1;
-  buf = _aligned_alloc(64,len*K*sizeof(poly));
+  if(len > SIZE_MAX/(K*sizeof(poly))) {
+    fprintf(stderr,"ERROR: Not enough memory\n");
+    exit(1);
+  }
+  buf = bigbuf_alloc(len*K*sizeof(poly));
   for(i=0;i<K;i++) {
     r->proj[i] = buf;
     buf = &r->proj[i][len];
@@ -96,7 +191,7 @@ void polxvec_init_frompolx(polxvec r, polx a) {
 
 void polxvec_free(polxvec r) {
   if(!r->alloc) return;
-  free(&r->proj[0][-r->off]);
+  bigbuf_free(&r->proj[0][-r->off],r->alloc*K*sizeof(poly));
   free(&r->widths[-r->off]);
   r->alloc = 0;
 }
