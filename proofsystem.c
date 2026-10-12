@@ -2,6 +2,7 @@
 #include <string.h>
 #include <assert.h>
 #include <inttypes.h>
+#include <sys/mman.h>
 #include "proofsystem.h"
 #include "polx.h"
 #include "malloc.h"
@@ -160,8 +161,17 @@ void jl_sample_mat(
 {
   uint8_t hashbuf[32];
   aes128ctr_ctx aesctx;
+  size_t bytes = 2 * len * 256 * N / 8;
+  const size_t hp = (size_t)1 << 21;
 
-  *jlmat1 = _aligned_alloc(64, 2 * len * 256 * N / 8);
+  if(bytes >= hp){
+    bytes = (bytes + hp - 1) & ~(hp - 1);
+    *jlmat1 = _aligned_alloc(hp, bytes);
+    madvise(*jlmat1, bytes, MADV_HUGEPAGE);
+  }
+  else{
+    *jlmat1 = _aligned_alloc(64, bytes);
+  }
   shake128(hashbuf, 32, h, 16);
   memcpy(h, hashbuf, 16);
   aes128ctr_init(&aesctx, &hashbuf[16], 0);
@@ -191,30 +201,26 @@ void jl_project(
   rows of the matrix jlmat.
 */
 void jl_aggregate_mat(
-  polxvec phi, 
+  polxvec *phi, 
+  size_t nphi,
   const uint8_t *jlmat1,
   const uint8_t *jlmat2, 
-  const int64_t chalz[256]
+  const int64_t *chalz
 )
 {
-  size_t i;
+  size_t i, j, k;
   int64_t Q = (1ULL<<LOGQ)-QOFF;
   __attribute__((aligned(64)))
-  int64_t chalz_div2[256];
+  int64_t chalz_div2[LIFTS*256];
   __int128_t inv2 = (Q+1)/2;
-  polxvec tmp;
-  
-  polxvec_init(tmp, phi->len, 1);
 
-  for(i=0;i<256;i++){
-    chalz_div2[i] = cmodq((chalz[i] * inv2) % Q);
+  for(j=0;j<nphi;j+=k){
+    k = MIN(LIFTS, nphi-j);
+    for(i=0;i<256*k;i++){
+      chalz_div2[i] = cmodq((chalz[256*j+i] * inv2) % Q);
+    }
+    polxvec_jlproj_collapsmat(&phi[j], k, jlmat1, jlmat2, chalz_div2);
   }
-
-  polxvec_jlproj_collapsmat(phi, jlmat1, chalz_div2);
-  polxvec_jlproj_collapsmat(tmp, jlmat2, chalz_div2);
-  polxvec_add(phi, phi, tmp);
-
-  polxvec_free(tmp);
 }
 
 /*
