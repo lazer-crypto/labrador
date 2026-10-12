@@ -81,8 +81,10 @@ size_t commit_add(polxvec out, const polxvec in, size_t off_comkey);
 void jl_sample_mat(uint8_t **jlmat1, uint8_t **jlmat2, uint8_t h[16], size_t len);
 void jl_project(int32_t p[256], const poly *s, size_t len, const uint8_t *jlmat1,
                 const uint8_t *jlmat2);
-void jl_aggregate_mat(polxvec phi, const uint8_t *jlmat1, const uint8_t *jlmat2, 
-                      const int64_t chalz[256]);
+void jl_project_multi(int32_t *p, poly *const *s, const size_t *len, size_t n,
+                      const uint8_t *jlmat1, const uint8_t *jlmat2);
+void jl_aggregate_mat(polxvec *phi, size_t nphi, const uint8_t *jlmat1, 
+                      const uint8_t *jlmat2, const int64_t *chalz);
 void jl_aggregate_proj(polxvec phi, size_t nbits, const int64_t chalz[256]);
 
 int verify(const statement st, const witness wt);

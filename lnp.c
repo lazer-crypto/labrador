@@ -2118,8 +2118,9 @@ static void lnp_projection_cnsts (
   uint8_t h[16]
 ) {
   size_t i, v0off, umoff, ybits, si_pos_merged;
-  int64_t *chalz;
+  int64_t *chalz, *chalz_si;
   polxvec phip, phiy, phiu, sv, phiv0, zpx, cx, phit, phiw, b;
+  polxvec phip_si[LNP_NPROJ];
 
   // projection of (w,t): c*Pi*(w,t) + c*y = z
   // y needs to be recomposed from binary yhat
@@ -2133,7 +2134,7 @@ static void lnp_projection_cnsts (
   polxvec_init (cx, 256 / N, 1);
   polxvec_init (b, 256 / N, 1);
 
-  jl_aggregate_mat (phip, jlmat3, jlmat4, chalz); // linear part corresponding to (w,t)
+  jl_aggregate_mat (&phip, 1, jlmat3, jlmat4, chalz); // linear part corresponding to (w,t)
 
   jl_aggregate_proj (phiy, ybits, chalz); // linear part corresponding to yhat (part of s6)
   polxvec_init_subvec2 (sv, phiy, ybits - 1, 1, 1); // negate part corresponding to most significant bit (required after jl_aggregate_proj)
@@ -2170,7 +2171,13 @@ static void lnp_projection_cnsts (
   // projection of si: c*Pi*si + c*ui = c*2^ki*wi - c*2^ki*ti + c*v0i
   // ui,v0i need to be recomposed from binary yhat
 
-  polxvec_init (phip, pp->silen_max, 1);
+  chalz_si = _malloc(LNP_NPROJ * 256 * sizeof(int64_t));
+  for (i = 0; i < LNP_NPROJ; i++) {
+    sample_chalz (&chalz_si[256 * i], 256, h);
+    polxvec_init (phip_si[i], pp->silen_max, 1);
+  }
+  jl_aggregate_mat (phip_si, LNP_NPROJ, jlmat1, jlmat2, chalz_si);
+
   polxvec_init (phit, 256 / N, 1);
   polxvec_init (phiw, 256 / N, 1);
 
@@ -2178,10 +2185,7 @@ static void lnp_projection_cnsts (
   umoff = 0;
   for (i = 0; i < LNP_NPROJ; i++) {
 
-  chalz = _malloc(256 * sizeof(int64_t));
-  sample_chalz (chalz, 256, h);
-
-  jl_aggregate_mat (phip, jlmat1, jlmat2, chalz); // linear part corresponding to si
+  chalz = &chalz_si[256 * i];
 
   polxvec_init (phiv0, pp->k[i], 1);
   jl_aggregate_proj (phiv0, pp->k[i], chalz); // linear part corresponding to v0ihat (part of xbin)
@@ -2215,7 +2219,7 @@ static void lnp_projection_cnsts (
   else if (i == 2) si_pos_merged = pp->off[Z1LO];
   else             si_pos_merged = pp->off[Z1S40]; // i == 3
   lnpzq->sparse[2 + i]->lin->off[1] = si_pos_merged;
-  polxvec_init_subvec2 (sv, phip, 0, 1, pp->silen[i]);
+  polxvec_init_subvec2 (sv, phip_si[i], 0, 1, pp->silen[i]);
   polxvec_copy (lnpzq->sparse[2 + i]->lin->phi[1], sv);
 
   polxvec_init (lnpzq->sparse[2 + i]->lin->phi[2], pp->k[i], 1);
@@ -2236,10 +2240,10 @@ static void lnp_projection_cnsts (
   umoff += pp->k[i] * 256 / N;
   polxvec_free (phiu);
   polxvec_free (phiv0);
-  free (chalz);
+  polxvec_free (phip_si[i]);
   }
 
-  polxvec_free (phip);
+  free (chalz_si);
   polxvec_free (phiw);
   polxvec_free (phit);
 }

@@ -70,7 +70,7 @@ static void test_jl_aggregate_mat(const uint8_t seed[16], size_t len){
 
   jlproj_expand_challenge(chalz, &hashbuf[32]);
 
-  jl_aggregate_mat(phi, jlmat1, jlmat2, chalz);
+  jl_aggregate_mat(&phi, 1, jlmat1, jlmat2, chalz);
 
   proj = jlproj_collapsproj(p, chalz);
 

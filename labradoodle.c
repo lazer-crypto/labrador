@@ -30,19 +30,21 @@ static void ldd_collapse_jl(
   __attribute__((aligned(64)))
   uint8_t hashbufjl[64 + QBYTES*256 + 24];
   __attribute__((aligned(64)))
-  int64_t chalz_jlmat[256];
+  int64_t chalz_jlmat[LIFTS][256];
 
   for(i=0;i<LIFTS;i++){
     shake128(hashbufjl, sizeof(hashbufjl), h, 16);
     memcpy(h, hashbufjl, 16);
-    jlproj_expand_challenge(chalz_jlmat, &hashbufjl[64]);
+    jlproj_expand_challenge(chalz_jlmat[i], &hashbufjl[64]);
 
     polxvec_init(jlmat_agg[i], nmax, 1);
     polxvec_init(phi_jlproj[i], jlbits_max * 256/N, 1);
+  }
 
-    jl_aggregate_mat(jlmat_agg[i], jlmat1, jlmat2, chalz_jlmat);
-    polxvec_refresh(jlmat_agg[i]);
-    jl_aggregate_proj(phi_jlproj[i], jlbits_max, chalz_jlmat);
+  jl_aggregate_mat(jlmat_agg, LIFTS, jlmat1, jlmat2, chalz_jlmat[0]);
+
+  for(i=0;i<LIFTS;i++){
+    jl_aggregate_proj(phi_jlproj[i], jlbits_max, chalz_jlmat[i]);
   }
 }
 
@@ -544,14 +546,14 @@ void ldd_prove(
   size_t i, j, k, tpos, projpos, off, liftpos;
   size_t jlbits[pp->r], jlbits_max;
   uint8_t *jlmat1, *jlmat2;
-  int32_t proj32[256];
+  int32_t *proj32;
   int64_t proj64[256];
   int64_t bufbits[4*pp->randlen*N], chalz_jl[LIFTS][LIFTS*pp->r];
   poly *sy[pp->r], *sout;
   polx *chalx_amortize;
   polxvec sxl, sxl_jl, sxq[pp->r], sxq_old[ist->r], phi[pp->r];
   polxvec tx, u1x, tgd, U1, u1d, Up, projd, projx, liftx, liftd, Ub, u2x, hd;
-  polxvec chalx_zq, U2, u2d, zx;
+  polxvec chalx_zq, U2, u2d, zx, sx_sv, jl_sv;
   polxvec jl_sprod_sx[LIFTS][pp->r], jlmat_agg[LIFTS], phi_jlproj[LIFTS];
   polxvec phi_jlproj_full[LIFTS];
   sparsecnst zqagg[LIFTS], finalcnst;
@@ -687,15 +689,17 @@ void ldd_prove(
 
   polxvec_init(projx, 256/N, 0);
   projpos = pp->off[LAB_PROJ];
+  proj32 = _malloc(256*pp->r*sizeof(int32_t));
+  jl_project_multi(proj32, sy, pp->n, pp->r, jlmat1, jlmat2);
   for(i=0;i<pp->r;i++){
-    jl_project(proj32, sy[i], pp->n[i], jlmat1, jlmat2);
     for(j=0;j<256;j++){
-      proj64[j] = proj32[j];
+      proj64[j] = proj32[256*i+j];
     }
     polxvec_fromint64vec(projx, proj64, 256/N, 1, 0);
     polxvec_bindec(&sout[projpos], projx, projx->len, jlbits[i]);
     projpos += 256/N * jlbits[i];
   }
+  free(proj32);
   polxvec_init(sxl_jl, pp->len[LAB_PROJ], 1);
   polxvec_frompolyvec(sxl_jl, &sout[pp->off[LAB_PROJ]], 1, sxl_jl->len, 0.5);
 
@@ -752,12 +756,26 @@ void ldd_prove(
 
   for(i=0;i<LIFTS;i++){
     for(j=0;j<pp->r;j++){
-      polxvec_init_subvec(jlmat_agg[i], jlmat_agg[i], 0, 1, pp->n[j]);
       polxvec_init(jl_sprod_sx[i][j], 1, 1);
-      polxvec_sprod(jl_sprod_sx[i][j], jlmat_agg[i], sxq[j]);
+      polxvec_setzero(jl_sprod_sx[i][j], 0, 1, 1);
+    }
+  }
+  for(off=0;off<pp->nmax;off+=32){
+    for(j=0;j<pp->r;j++){
+      if(off >= pp->n[j]){
+        continue;
+      }
+      polxvec_init_subvec2(sx_sv, sxq[j], off, 1, MIN(32, pp->n[j] - off));
+      for(i=0;i<LIFTS;i++){
+        polxvec_init_subvec2(jl_sv, jlmat_agg[i], off, 1, sx_sv->len);
+        polxvec_sprod_add(jl_sprod_sx[i][j], jl_sv, sx_sv);
+      }
+    }
+  }
+  for(i=0;i<LIFTS;i++){
+    for(j=0;j<pp->r;j++){
       polxvec_refresh(jl_sprod_sx[i][j]);
     }
-    polxvec_init_subvec(jlmat_agg[i], jlmat_agg[i], 0, 1, 0);
   }
 
   timing_end(&time);

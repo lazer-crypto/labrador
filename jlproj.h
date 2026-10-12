@@ -12,11 +12,14 @@
 
 void poly_jlproj_add(int32_t r[256], const poly p, const uint8_t mat[256*N/8]);
 void polyvec_jlproj_add(int32_t r[256], const poly *p, size_t len, const uint8_t *mat);
-void polxvec_jlproj_collapsmat(polxvec r, const uint8_t *mat, const int64_t alpha[256]);
+void polxvec_jlproj_collapsmat(polxvec *r, size_t nr, const uint8_t *mat1, const uint8_t *mat2,
+                               const int64_t *alpha);
 int64_t jlproj_collapsproj(const int32_t p[256], const int64_t alpha[256]);
 uint64_t jlproj_normsq(const int32_t p[256]);
 
 void polyvec_jlproj_add_bin1(int32_t r[256], const poly *p, size_t len, const uint8_t *mat1, const uint8_t *mat2);
+void polyvec_jlproj_add_bin1_multi(int32_t *r, poly *const *p, const size_t *len, size_t np,
+                                   const uint8_t *mat1, const uint8_t *mat2);
 
 void jlproj_expand_challenge(int64_t alpha[256], const uint8_t buf[256*QBYTES]);
 
