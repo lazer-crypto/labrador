@@ -256,7 +256,7 @@ void polx_monomial(polx r, int k, int64_t v) {
   size_t i;
 
   v = cmodq(v);
-  r->width = v/sqrt(N);
+  r->width = (double)v*v/N;
   for(i=0;i<K;i++)
     poly_monomial_ntt(r->proj[i],modp(v,primes[i]),k,primes[i]);
 }
@@ -539,11 +539,14 @@ void polxvec_invntt(polxvec r, const polxvec a) {
 
 void polxvec_ntt_interleaved_half(polxvec r, const polxvec a) {
   size_t i;
+  double w = 0;
 
   assert(r->len == 2*a->len);
   if(r->widths) {
+    for(i=0;i<a->len;i++)
+      w += a->widths[i*a->stride];
     for(i=0;i<r->len;i++) {
-      r->widths[i*r->stride] = 0;  // FIXME
+      r->widths[i*r->stride] = w;
       assert(r->widths[i*r->stride] <= MAXWIDTH);
     }
   }
@@ -553,11 +556,14 @@ void polxvec_ntt_interleaved_half(polxvec r, const polxvec a) {
 
 void polxvec_invntt_interleaved(polxvec r, const polxvec a) {
   size_t i;
+  double w = 0;
 
   assert(r->len == a->len);
   if(r->widths) {
+    for(i=0;i<a->len;i++)
+      w = MAX(w,a->widths[i*a->stride]);
     for(i=0;i<r->len;i++) {
-      r->widths[i*r->stride] = 0;  // FIXME
+      r->widths[i*r->stride] = w;
       assert(r->widths[i*r->stride] <= MAXWIDTH);
     }
   }
@@ -861,10 +867,26 @@ size_t polxvec_collaps_add_extension(polxvec c, const polxvec b, const polxvec a
   size_t i,j,k;
   size_t deg;
   double width_a,width_b,width_c;
+  uintptr_t c0,c1,a0,a1;
+  polxvec t,a_sv;
 
   deg = next2power(b->len);
   k  = extlen(c->len,deg);
   assert(a->len >= off_a+k);
+  if(!c->len)
+    return k;
+  c0 = (uintptr_t)c->proj[0];
+  c1 = (uintptr_t)&c->proj[0][(c->len-1)*c->stride];
+  a0 = (uintptr_t)&a->proj[0][off_a*a->stride];
+  a1 = (uintptr_t)&a->proj[0][(off_a+k-1)*a->stride];
+  if(MIN(c0,c1) <= MAX(a0,a1) && MIN(a0,a1) <= MAX(c0,c1)) {
+    polxvec_init(t,k,1);
+    polxvec_init_subvec2(a_sv,a,off_a,1,k);
+    polxvec_copy(t,a_sv);
+    polxvec_collaps_add_extension(c,b,t,0);
+    polxvec_free(t);
+    return k;
+  }
   assert(!c->widths || (a->widths && b->widths));
   if(c->widths) {
     width_b = 0;
@@ -873,8 +895,8 @@ size_t polxvec_collaps_add_extension(polxvec c, const polxvec b, const polxvec a
     for(i=0;i<c->len;i+=deg) {
       width_a = 0;
       for(j=0;j<deg;j++)
-         width_a += a->widths[(off_a+i+j)*a->stride];
-      width_c = width_a*width_b*N/deg;
+         width_a = MAX(width_a,a->widths[(off_a+i+j)*a->stride]);
+      width_c = width_a*width_b*N;
       for(j=0;j<MIN(deg,c->len-i);j++) {
         c->widths[(i+j)*c->stride] += width_c;
         assert(c->widths[(i+j)*c->stride] <= MAXWIDTH);
@@ -888,15 +910,17 @@ size_t polxvec_collaps_add_extension(polxvec c, const polxvec b, const polxvec a
 }
 
 size_t polxvec_pairwise_mul(polxvec h, const polxvec a) {
-  size_t i;
+  size_t i,j;
   const size_t r = a->len;
   const size_t m = (r*r+r)/2;
 
   assert(h->len == m);
   if(h->widths) {
-    for(i=0;i<m;i++) {
-      h->widths[i*h->stride] = 0;  //FIXME
-      assert(h->widths[i*h->stride] <= MAXWIDTH);
+    for(i=0;i<r;i++) {
+      for(j=i;j<r;j++) {
+        h->widths[pwidx(i,j,r)*h->stride] = N*a->widths[i*a->stride]*a->widths[j*a->stride];
+        assert(h->widths[pwidx(i,j,r)*h->stride] <= MAXWIDTH);
+      }
     }
   }
   for(i=0;i<K;i++)
@@ -905,15 +929,24 @@ size_t polxvec_pairwise_mul(polxvec h, const polxvec a) {
 }
 
 size_t polxvec_pairwise_sprod(polxvec g, const polxvec a, const polxvec b, size_t r, size_t n) {
-  size_t i;
+  size_t i,j,t;
+  double w;
   const size_t m = (r*r+r)/2;
 
   assert(g->len == m);
   assert(a->len == r*n && b->len == r*n);
   if(g->widths) {
-    for(i=0;i<m;i++) {
-      g->widths[i*g->stride] = 0;  //FIXME
-      assert(g->widths[i*g->stride] <= MAXWIDTH);
+    for(i=0;i<r;i++) {
+      for(j=i;j<r;j++) {
+        w = 0;
+        for(t=0;t<n;t++) {
+          w += a->widths[(i*n+t)*a->stride]*b->widths[(j*n+t)*b->stride];
+          if(i != j)
+            w += a->widths[(j*n+t)*a->stride]*b->widths[(i*n+t)*b->stride];
+        }
+        g->widths[pwidx(i,j,r)*g->stride] = N*w*((i != j && a == b) ? 2 : 1);
+        assert(g->widths[pwidx(i,j,r)*g->stride] <= MAXWIDTH);
+      }
     }
   }
   for(i=0;i<K;i++)
@@ -972,11 +1005,12 @@ void polxvec_reconstruct(polxvec r, const poly *a, ssize_t stride, size_t t, siz
   size_t j,k;
   polz b[32];
 
-  //polxvec_setwidths1(r,0,r->len,ldexp(1,2*d*t)/12.0);
   for(j=0;(k=MIN(32,r->len-j));j+=k) {
     polzvec_reconstruct(b,&a[j],k,stride,t,d);
     polzvec_topolxvec(r,b,j,1,k);
   }
+  if(d*t > LOGQ)
+    polxvec_setwidths1(r,0,1,r->len,ldexp(1,2*d*t)/12.0);
 }
 
 void polx_sigmam1(polx r, const polx a) {

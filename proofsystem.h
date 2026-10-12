@@ -83,6 +83,7 @@ void jl_project(int32_t p[256], const poly *s, size_t len, const uint8_t *jlmat1
                 const uint8_t *jlmat2);
 void jl_aggregate_mat(polxvec phi, const uint8_t *jlmat1, const uint8_t *jlmat2, 
                       const int64_t chalz[256]);
+double int64vec_width(const int64_t *a, size_t len, size_t deg);
 void jl_aggregate_proj(polxvec phi, size_t nbits, const int64_t chalz[256]);
 
 int verify(const statement st, const witness wt);

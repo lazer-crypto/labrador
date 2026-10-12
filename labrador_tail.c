@@ -127,6 +127,7 @@ static void ldr_tail_addcheck_amortization(
   polxvec_init(tx, pp->kappa[0], 1);
   for(i=0;i<pp->r;i++){
     polzvec_topolxvec(tx, &tz[i * pp->kappa[0]], 0, 1, pp->kappa[0]);
+    polxvec_setwidths1(tx, 0, 1, pp->kappa[0], 4*WIDTHMOD(LOGQ));
     polxvec_polx_mul_add(c->b, chalx[i], tx);
   }
   polxvec_refresh(c->b);
@@ -167,6 +168,7 @@ static void ldr_tail_addcheck_quadg(
   off = 0;
   for(i=0;i<pp->r;i++){
     polzvec_topolxvec(gx, &gz[off], 0, 1, 1);
+    polxvec_setwidths1(gx, 0, 1, 1, 4*WIDTHMOD(LOGQ));
     polx_mul(cprod, chalx[i], chalx[i]);
     polxvec_polx_mul_add(c->b, cprod, gx);
     off++;
@@ -174,6 +176,7 @@ static void ldr_tail_addcheck_quadg(
     polx_scale(cdouble, chalx[i], 2);
     for(j=i+1;j<pp->r;j++){
       polzvec_topolxvec(gx, &gz[off], 0, 1, 1);
+      polxvec_setwidths1(gx, 0, 1, 1, 4*WIDTHMOD(LOGQ));
       polx_mul(cprod, cdouble, chalx[j]);
       polxvec_polx_mul_add(c->b, cprod, gx);
       off++;
@@ -210,14 +213,17 @@ static void ldr_tail_addcheck_ling(
   polxvec_init(hx, 1, 1);
 
   polzvec_topolxvec(hx, &hz[0], 0, 1, 1);
+  polxvec_setwidths1(hx, 0, 1, 1, 4*WIDTHMOD(LOGQ));
   polx_mul(csquare, chalx[0], chalx[0]);
   polxvec_polx_mul(c->b, csquare, hx);
 
   for(i=1;i<pp->r;i++){
     polzvec_topolxvec(hx, &hz[2*i-1], 0, 1, 1);
+    polxvec_setwidths1(hx, 0, 1, 1, 4*WIDTHMOD(LOGQ));
     polxvec_polx_mul_add(c->b, chalx[i], hx);
 
     polzvec_topolxvec(hx, &hz[2*i], 0, 1, 1);
+    polxvec_setwidths1(hx, 0, 1, 1, 4*WIDTHMOD(LOGQ));
     polx_mul(csquare, chalx[i], chalx[i]);
     polxvec_polx_mul_add(c->b, csquare, hx);
   }
@@ -257,7 +263,7 @@ static int ldr_tail_check_system(
   size_t rmap[pp->r_old];
   int check;
   polxvec ev, gx, hx;
-  polz *gz, *hz;
+  polz *gz, *hz, gc;
 
   gz = &pi->m[0][pp->len[LAB_INCOM]];
   hz = pi->m[3];
@@ -279,7 +285,12 @@ static int ldr_tail_check_system(
     i = finalcnst->quad->rows[k];
     j = finalcnst->quad->cols[k];
     for(l=0;l<pp->rr[i];l++){
-      polzvec_topolxvec(gx,&gz[trimat_idx(rmap[i]+l, rmap[j]+l, pp->r)],0,1,1);
+      polzvec_copy(&gc, &gz[trimat_idx(rmap[i]+l, rmap[j]+l, pp->r)], 1);
+      polz_center(gc);
+      polzvec_topolxvec(gx, &gc, 0, 1, 1);
+      if(ev->widths[0] + N*finalcnst->quad->coeffs[k]->width*gx->widths[0] > MAXWIDTH){
+        polxvec_refresh(ev);
+      }
       polxvec_polx_mul_add(ev, finalcnst->quad->coeffs[k], gx);
     }
   }
@@ -287,6 +298,7 @@ static int ldr_tail_check_system(
   // ev += \sum_i h_ii
   for(i=0;i<pp->r;i++){
     polzvec_topolxvec(hx, &hz[2*i], 0, 1, 1);
+    polxvec_setwidths1(hx, 0, 1, 1, 4*WIDTHMOD(LOGQ));
     polxvec_add(ev, ev, hx);
   }
 
@@ -316,6 +328,8 @@ void ldr_tail_prove(
   poly *sy[pp->r], *sout;
   polx *chalx_amortize;
   polxvec sxl, sxq[pp->r], sxq_old[ist->r], phi[pp->r], phi_amortize, tx, liftx;
+  polxvec liftx_sv, chalx_lift[LIFTS];
+  int64_t *chalz_lift;
   sparsecnst zqagg[LIFTS], finalcnst;
 
   // View input witness with new split
@@ -328,7 +342,7 @@ void ldr_tail_prove(
   // Input witness to polx
 
   polxvec_init(sxl, pp->nn, 1);
-  polxvec_frompolyvec(sxl, sy[0], 1, pp->nn, pp->normsq_global/(pp->nn*N));
+  polxvec_frompolyvec(sxl, sy[0], 1, pp->nn, (double)pp->normsq_global/(pp->nn*N));
   
   off = 0;
   for(i=0;i<pp->r;i++){
@@ -374,22 +388,24 @@ void ldr_tail_prove(
 
   // Aggregate projections with other Zq constraints
 
-  ldr_aggregate_zq(zqagg, ist, jlmat1, jlmat2, pi->p, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_zq(zqagg, &chalz_lift, chalx_lift, ist, jlmat1, jlmat2, pi->p,
+                   pp->nn, ost->h);
 
   // Lift constraints
 
-  polxvec_init(liftx, 1, 1);
+  polxvec_init(liftx, LIFTS, 1);
+  ldr_lifts_eval(liftx, zqagg, chalz_lift, chalx_lift, ist, sxq_old, sxl);
   for(i=0;i<LIFTS;i++){
-    sparsecnst_eval(liftx, zqagg[i], sxq_old, sxl);
-    polzvec_frompolxvec(&pi->m[2][i], liftx, 0, 1, 1);
-    polxvec_add(zqagg[i]->b, zqagg[i]->b, liftx);
+    polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);
+    polzvec_frompolxvec(&pi->m[2][i], liftx_sv, 0, 1, 1);
+    polxvec_add(zqagg[i]->b, zqagg[i]->b, liftx_sv);
     polxvec_refresh(zqagg[i]->b);
   }
   update_hash_polz(ost->h, pi->m[2], LIFTS);
 
   // Aggregate Rq constraints
 
-  ldr_aggregate_rq(finalcnst, ist, zqagg, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_rq(finalcnst, ist, zqagg, NULL, NULL, pp->nn, pp->r_old, ost->h);
 
   off = 0;
   for(i=0;i<pp->r;i++){
@@ -410,6 +426,7 @@ void ldr_tail_prove(
   for(i=0;i<LIFTS;i++){
     sparsecnst_free(zqagg[i]);
   }
+  ldr_lifts_free(chalz_lift, chalx_lift, ist);
   sparsecnst_free(finalcnst);
   polxvec_free(sxl);
   polxvec_free(tx);
@@ -429,7 +446,8 @@ int ldr_tail_reduce(
   size_t i, off;
   uint8_t *jlmat1, *jlmat2, hashbuf[1024];
   polx *chalx_amortize;
-  polxvec phi[pp->r], phi_amortize, liftx, liftx_sv;
+  polxvec phi[pp->r], phi_amortize, liftx, liftx_sv, chalx_lift[LIFTS];
+  int64_t *chalz_lift;
   sparsecnst zqagg[LIFTS], finalcnst;
   int check, ret;
 
@@ -463,13 +481,15 @@ int ldr_tail_reduce(
 
   // Aggregate projections with other Zq constraints
 
-  ldr_aggregate_zq(zqagg, ist, jlmat1, jlmat2, pi->p, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_zq(zqagg, &chalz_lift, chalx_lift, ist, jlmat1, jlmat2, pi->p,
+                   pp->nn, ost->h);
   free(jlmat1);
 
   // Update constraints with liftings
 
   polxvec_init(liftx, LIFTS, 1);
   polzvec_topolxvec(liftx, pi->m[2], 0, 1, LIFTS);
+  polxvec_setwidths1(liftx, 0, 1, LIFTS, 4*WIDTHMOD(LOGQ));
 
   for(i=0;i<LIFTS;i++){
     polxvec_init_subvec2(liftx_sv, liftx, i, 1, 1);
@@ -490,6 +510,7 @@ int ldr_tail_reduce(
     for(i=0;i<LIFTS;i++){
       sparsecnst_free(zqagg[i]);
     }
+    ldr_lifts_free(chalz_lift, chalx_lift, ist);
     fprintf(stderr, "ERROR in ldr_tail_reduce(): the constant coefficient of " 
                     "the liftings is not 0\n");
     return 2;
@@ -501,7 +522,8 @@ int ldr_tail_reduce(
 
   // Aggregate Rq constraints
 
-  ldr_aggregate_rq(finalcnst, ist, zqagg, pp->nn, pp->r_old, ost->h);
+  ldr_aggregate_rq(finalcnst, ist, zqagg, chalz_lift, chalx_lift, pp->nn, 
+                   pp->r_old, ost->h);
 
   off = 0;
   for(i=0;i<pp->r;i++){
@@ -528,6 +550,7 @@ int ldr_tail_reduce(
   for(i=0;i<LIFTS;i++){
     sparsecnst_free(zqagg[i]);
   }
+  ldr_lifts_free(chalz_lift, chalx_lift, ist);
   sparsecnst_free(finalcnst);
   polxvec_free(phi_amortize);
   free(chalx_amortize);

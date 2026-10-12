@@ -217,6 +217,22 @@ void jl_aggregate_mat(
   polxvec_free(tmp);
 }
 
+double int64vec_width(const int64_t *a, size_t len, size_t deg){
+  size_t i, j, k;
+  double w, wmax = 0;
+
+  for(i=0;i<len;i++){
+    for(j=0;j<deg;j++){
+      w = 0;
+      for(k=0;k<N;k++){
+        w += (double)a[i*deg*N + k*deg + j]*a[i*deg*N + k*deg + j];
+      }
+      wmax = MAX(wmax, w/N);
+    }
+  }
+  return wmax;
+}
+
 /*
   The output phi is the linear part that multiplies the binary-decomposed
   projections when checking the correctness of the 256 projection coefficients 
@@ -240,7 +256,7 @@ void jl_aggregate_proj(
     }
 
     polxvec_init_subvec2(phi_sv, phi, i, 1, 1);
-    polxvec_fromint64vec2(phi_sv, phi64, 1, 1, WIDTHMOD(LOGQ));
+    polxvec_fromint64vec2(phi_sv, phi64, 1, 1, int64vec_width(phi64, 1, 1));
   }
 
   for(i=1;i<nbits;i++){
@@ -274,7 +290,7 @@ int verify(const statement st, const witness wt){
 
   off = 0;
   for(i=0;i<wt->r;i++){
-    polxvec_setwidths1(sxl, off, 1, wt->n[i], st->normsq[i]/(st->n[i]*N));
+    polxvec_setwidths1(sxl, off, 1, wt->n[i], (double)st->normsq[i]/(st->n[i]*N));
     polxvec_init_subvec2(sxq[i], sxl, off, 1, wt->n[i]);
     off += wt->n[i];
   }
@@ -442,6 +458,7 @@ void ps_addcheck_commit_in_clear(
   c->comw_len[0] = len;
 
   polzvec_topolxvec(c->b, U, 0, 1, rank);
+  polxvec_setwidths1(c->b, 0, 1, rank, 4*WIDTHMOD(LOGQ));
 }
 
 void ps_addcheck_commit_middle(
@@ -514,7 +531,7 @@ void ps_addcheck_commit_coeffs(
     phi64[idx] = (i==0) ? 1 : -1;
     for(j=0;j<digits_unif;j++){ 
       polxvec_init_subvec2(phi, c[i]->lin->phi[0], j, 1, 1);
-      polxvec_fromint64vec2(phi, phi64, 1, 1, 1);
+      polxvec_fromint64vec2(phi, phi64, 1, 1, int64vec_width(phi64, 1, 1));
       phi64[idx] *= 1 << base_unif;
     }
     phi64[idx] = 0;

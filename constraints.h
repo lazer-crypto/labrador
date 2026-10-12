@@ -210,6 +210,17 @@ void zqcnstset_free(zqcnstset zqc);
 int zqcnstset_check(const zqcnstset zqc, const polxvec sxq[],const polxvec sxl);
 void zqcnstset_aggregate_add(sparsecnst out, const zqcnstset zqc, 
                              const int64_t *chalz, const polxvec chalx);
+void cnstset_aggregate(sparsecnst out, const rqcnstset rqc, 
+                       const zqcnstset zqc, const int64_t *chalz, size_t stride,
+                       const polxvec *chalx, const sparsecnst *dense, 
+                       const polxvec chal, double wmax);
+void zqcnstset_lifts_canonical(polxvec ev, sparsecnst *agg, const zqcnstset zqc,
+                               const int64_t *chalz, size_t stride,
+                               const polxvec *chalx, const polxvec sxq[],
+                               const polxvec sxl);
+void zqcnstset_lifts_eval(polxvec ev, const zqcnstset zqc, const int64_t *chalz,
+                          size_t stride, const polxvec *chalx, 
+                          const polxvec sxq[], const polxvec sxl);
 
 void polxvec_rotation_aggregate_add(polxvec r, const polxvec a, const polxvec b);                             
 
