@@ -80,6 +80,8 @@ __attribute__((const))
 size_t pwidx(size_t i, size_t j, size_t r);
 void polyvec_pairwise_sprod(poly *g, const poly *a, const poly *b, size_t r, size_t n, const pdata prime);
 void polyvec_pairwise_pointwise(poly *g, const poly *a, const poly *b, ssize_t stride_g, ssize_t stride_a, ssize_t stride_b, size_t r, size_t s, const pdata prime);
+void polyvec_sprod_pairs(poly *g, ssize_t stride_g, const poly **a, const poly **b, const size_t *la, const size_t *lb, const ssize_t *sta, const ssize_t *stb, size_t r, const pdata prime);
+void polyvec_sprod_extension_blocked(poly *c, const poly *a, const poly *b, ssize_t stride_c, ssize_t stride_a, ssize_t stride_b, size_t deg, size_t clen, size_t blen, const pdata prime);
 
 void poly_scale(poly r, const poly a, int16_t s, const pdata prime);
 void polyvec_scale(poly *r, const poly *a, ssize_t stride_r, ssize_t stride_a, size_t len, int16_t s, const pdata prime);

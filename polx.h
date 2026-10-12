@@ -92,9 +92,11 @@ void polxvec_sprod(polxvec r, const polxvec a, const polxvec b);
 void polxvec_sprod_add(polxvec r, const polxvec a, const polxvec b);
 size_t polxvec_sprod_extension(polxvec c, const polxvec a, const polxvec b);
 size_t polxvec_sprod_extension_add(polxvec c, const polxvec a, const polxvec b);
+size_t polxvec_sprod_extension_blocked(polxvec c, const polxvec a, const polxvec b);
 size_t polxvec_collaps_add_extension(polxvec c, const polxvec a, const polxvec b, size_t off_a);
 size_t polxvec_pairwise_mul(polxvec h, const polxvec a);
 size_t polxvec_pairwise_sprod(polxvec g, const polxvec a, const polxvec b, size_t r, size_t n);
+void polxvec_sprod_pairs(polxvec g, const polxvec a[], const polxvec b[], size_t r);
 
 void polx_scale(polx r, const polx a, int64_t s);
 void polx_scale_frompoly(polx r, const poly a, double width, int64_t s);
