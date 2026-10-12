@@ -51,7 +51,9 @@ void polzvec_frompolyvec(polz *r, const poly *a, ssize_t stride, size_t len);
 void polz_topolx(polx r, const polz a);
 void polzvec_topolxvec(polxvec r, const polz *a, size_t off, ssize_t stride, size_t len);
 void polz_frompolx(polz r, const polx a);
+void polz_frompolx_center(polz r, const polx a);
 void polzvec_frompolxvec(polz *r, const polxvec a, size_t off, ssize_t stride, size_t len);
+void polzvec_frompolxvec_center(polz *r, const polxvec a, size_t off, ssize_t stride, size_t len);
 
 void polz_add(polz r, const polz a, const polz b);
 void polzvec_add(polz *r, const polz *a, const polz *b, size_t len);

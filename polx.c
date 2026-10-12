@@ -196,23 +196,21 @@ void polxvec_setzero(polxvec r, size_t off, ssize_t stride, size_t len) {
 int polx_iszero(const polx a) {
   polz t;
 
-  polz_frompolx(t,a);
-  polz_center(t);
+  polz_frompolx_center(t,a);
   return polz_iszero(t);
 }
 
 int polxvec_iszero(const polxvec a) {
   size_t j,k;
   int64_t r = 0;
-  polz t[32];
+  polz t[8];
 
-  for(j=0;(k=MIN(32,a->len-j));j+=k) {
-    polzvec_frompolxvec(t,a,j,1,k);
-    polzvec_center(t,k);
+  for(j=0;(k=MIN(8,a->len-j));j+=k) {
+    polzvec_frompolxvec_center(t,a,j,1,k);
     r += polzvec_iszero(t,k);
   }
 
-  r -= (a->len+31)/32;
+  r -= (a->len+7)/8;
   r >>= 63;
   r += 1;
   return r;
@@ -221,8 +219,7 @@ int polxvec_iszero(const polxvec a) {
 int polx_iszero_constcoeff(const polx a) {
   polz t;
 
-  polz_frompolx(t,a);
-  polz_center(t);
+  polz_frompolx_center(t,a);
   return polz_iszero_constcoeff(t);
 }
 
@@ -230,8 +227,7 @@ int polxvec_iszero_constcoeff(const polxvec a, size_t j) {
   polz t;
 
   assert(a->len > j);
-  polzvec_frompolxvec(&t,a,j,0,1);
-  polz_center(t);
+  polzvec_frompolxvec_center(&t,a,j,0,1);
   return polz_iszero_constcoeff(t);
 }
 
@@ -311,21 +307,23 @@ void polx_frompoly(polx r, const poly a, double width) {
 
   assert(width <= MAXWIDTH);
   r->width = width;
-  for(i=0;i<K;i++)
-    poly_scale(r->proj[i],a,primes[i]->s,primes[i]);
-  polx_ntt(r,r);
+  for(i=0;i+1<K;i+=2)
+    poly_ntt_scale2(r->proj[i],r->proj[i+1],a,a,primes[i]->s,primes[i+1]->s,primes[i],primes[i+1]);
+  if(K&1)
+    poly_ntt_scale(r->proj[K-1],a,primes[K-1]->s,primes[K-1]);
 }
 
 void polxvec_frompolyvec(polxvec r, const poly *a, ssize_t stride, size_t len, double width) {
-  size_t i,j,k;
+  size_t i,j;
 
   assert(r->len >= len);
   polxvec_setwidths1(r,0,1,len,width);
-  for(j=0;(k=MIN(32,len-j));j+=k) {
-    for(i=0;i<K;i++) {
-      polyvec_scale(&r->proj[i][j*r->stride],&a[j*stride],r->stride,stride,k,primes[i]->s,primes[i]);
-      polyvec_ntt(&r->proj[i][j*r->stride],&r->proj[i][j*r->stride],r->stride,r->stride,k,primes[i]);
-    }
+  for(j=0;j<len;j++) {
+    for(i=0;i+1<K;i+=2)
+      poly_ntt_scale2(r->proj[i][j*r->stride],r->proj[i+1][j*r->stride],a[j*stride],a[j*stride],
+                      primes[i]->s,primes[i+1]->s,primes[i],primes[i+1]);
+    if(K&1)
+      poly_ntt_scale(r->proj[K-1][j*r->stride],a[j*stride],primes[K-1]->s,primes[K-1]);
   }
 }
 
@@ -395,25 +393,6 @@ void polx_challenge(polx r, const uint8_t seed[16], uint64_t nonce) {
 void polxvec_challenge(polxvec r, const uint8_t seed[16], uint64_t nonce) {
   polyvec_challenge(r->proj[K-1],r->stride,r->len,seed,nonce);
   polxvec_frompolyvec(r,r->proj[K-1],r->stride,r->len,(double)(TAU1+4*TAU2)/N);
-}
-
-void polx_refresh(polx r) {
-  polz t;
-
-  polz_frompolx(t,r);
-  polz_center(t);
-  polz_topolx(r,t);
-}
-
-void polxvec_refresh(polxvec r) {
-  size_t j,k;
-  polz t[32];
-
-  for(j=0;(k=MIN(32,r->len-j));j+=k) {
-    polzvec_frompolxvec(t,r,j,1,k);
-    polzvec_center(t,k);
-    polzvec_topolxvec(r,t,j,1,k);
-  }
 }
 
 void polx_reduce(polx r) {
@@ -924,19 +903,17 @@ size_t polxvec_pairwise_sprod(polxvec g, const polxvec a, const polxvec b, size_
 void polx_bindec(poly *r, const polx a, ssize_t stride, size_t t) {
   polz b;
 
-  polz_frompolx(b,a);
-  polz_center(b);
+  polz_frompolx_center(b,a);
   polz_bindec(r,b,stride,t);
 }
 
 void polxvec_bindec(poly *r, const polxvec a, ssize_t stride, size_t t) {
   size_t j,k;
-  polz b[32];
+  polz b[8];
 
   assert(stride >= (ssize_t)a->len);
-  for(j=0;(k=MIN(32,a->len-j));j+=k) {
-    polzvec_frompolxvec(b,a,j,1,k);
-    polzvec_center(b,k);
+  for(j=0;(k=MIN(8,a->len-j));j+=k) {
+    polzvec_frompolxvec_center(b,a,j,1,k);
     polzvec_bindec(&r[j],b,k,stride,t);
   }
 }
@@ -944,19 +921,17 @@ void polxvec_bindec(poly *r, const polxvec a, ssize_t stride, size_t t) {
 void polx_decompose(poly *r, const polx a, ssize_t stride, size_t t, size_t d) {
   polz b;
 
-  polz_frompolx(b,a);
-  polz_center(b);
+  polz_frompolx_center(b,a);
   polz_decompose(r,b,stride,t,d);
 }
 
 void polxvec_decompose(poly *r, const polxvec a, ssize_t stride, size_t t, size_t d) {
   size_t j,k;
-  polz b[32];
+  polz b[8];
 
   assert(stride >= (ssize_t)a->len);
-  for(j=0;(k=MIN(32,a->len-j));j+=k) {
-    polzvec_frompolxvec(b,a,j,1,k);
-    polzvec_center(b,k);
+  for(j=0;(k=MIN(8,a->len-j));j+=k) {
+    polzvec_frompolxvec_center(b,a,j,1,k);
     polzvec_decompose(&r[j],b,k,stride,t,d);
   }
 }

@@ -2,11 +2,13 @@
 //compare to zero / add or sub p
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <immintrin.h>
 #include "data.h"
 #include "poly.h"
 
 #define _mm512_moveldup_epi32(f) _mm512_castps_si512(_mm512_moveldup_ps(_mm512_castsi512_ps(f)))
+#define _mm512_movehdup_epi32(f) _mm512_castps_si512(_mm512_movehdup_ps(_mm512_castsi512_ps(f)))
 #pragma GCC diagnostic ignored "-Wunused-label"
 
 static inline __m512i mulmod(const __m512i a, const __m512i b, const __m512i b_pinv, const __m512i p) {
@@ -29,170 +31,253 @@ static inline __m512i divmont(const __m512i a, const __m512i p, const __m512i pi
   return r;
 }
 
-void poly_ntt(poly r, const poly a, const pdata prime) {
-  size_t i;
-  __m512i f[N/32],g[N/32];
-  __m512i zeta,zeta_pinv;
+static inline __attribute__((always_inline))
+void ntt(union vecn *const *r, const union vecn *const *a, size_t n, int scale, const int16_t *s, const pdata_ptr *prime) {
+  size_t i,u;
+  __m512i f[2][N/32],g[2][N/32];
+  __m512i zeta[2],zeta_pinv[2];
+  __m512i p[2],pinv[2];
   __m512i permwidx;
   __m512i t;
-  const __m512i p = _mm512_set1_epi16(prime->p);
-  const __m512i pinv = _mm512_set1_epi16(prime->pinv);
+  const __m512i dupw0 = _mm512_set_epi64(0x0D0C0D0C09080908,0x0504050401000100,0x0D0C0D0C09080908,0x0504050401000100,
+                                         0x0D0C0D0C09080908,0x0504050401000100,0x0D0C0D0C09080908,0x0504050401000100);
+  const __m512i dupw1 = _mm512_set_epi64(0x0F0E0F0E0B0A0B0A,0x0706070603020302,0x0F0E0F0E0B0A0B0A,0x0706070603020302,
+                                         0x0F0E0F0E0B0A0B0A,0x0706070603020302,0x0F0E0F0E0B0A0B0A,0x0706070603020302);
+
+  for(u=0;u<n;u++) {
+    p[u] = _mm512_set1_epi16(prime[u]->p);
+    pinv[u] = _mm512_set1_epi16(prime[u]->pinv);
+  }
 
 load:
-  for(i=0;i<N/32;i++)
-    f[i] = _mm512_load_si512(&a->v[i]);
+  for(u=0;u<n;u++) {
+    zeta[u] = _mm512_set1_epi16(s[u]);
+    zeta_pinv[u] = _mm512_set1_epi16(s[u]*prime[u]->pinv);
+  }
+  for(i=0;i<N/32;i++) {
+    for(u=0;u<n;u++) {
+      f[u][i] = _mm512_load_si512(&a[u]->v[i]);
+      if(scale) f[u][i] = mulmod(f[u][i],zeta[u],zeta_pinv[u],p[u]);
+    }
+  }
 
 level0:
-  zeta = _mm512_set1_epi16(prime->i);
-  zeta_pinv = _mm512_set1_epi16(prime->i_pinv);
+  for(u=0;u<n;u++) {
+    zeta[u] = _mm512_set1_epi16(prime[u]->i);
+    zeta_pinv[u] = _mm512_set1_epi16(prime[u]->i_pinv);
+  }
   for(i=0;i<N/64;i++) {
-    t = mulmod(f[N/64+i],zeta,zeta_pinv,p);
+    for(u=0;u<n;u++) {
+      t = mulmod(f[u][N/64+i],zeta[u],zeta_pinv[u],p[u]);
 
-    f[N/64+i] = _mm512_sub_epi16(f[i],t);
-    f[i] = _mm512_add_epi16(f[i],t);
+      f[u][N/64+i] = _mm512_sub_epi16(f[u][i],t);
+      f[u][i] = _mm512_add_epi16(f[u][i],t);
 
-    g[2*i+0] = _mm512_shuffle_i64x2(f[i],f[N/64+i],0x44);
-    g[2*i+1] = _mm512_shuffle_i64x2(f[i],f[N/64+i],0xEE);
+      g[u][2*i+0] = _mm512_shuffle_i64x2(f[u][i],f[u][N/64+i],0x44);
+      g[u][2*i+1] = _mm512_shuffle_i64x2(f[u][i],f[u][N/64+i],0xEE);
+    }
   }
 
 level1:
-  zeta = _mm512_castsi128_si512(_mm_loadl_epi64((__m128i*)&prime->zetas->c[2]));
-  zeta_pinv = _mm512_castsi128_si512(_mm_loadl_epi64((__m128i*)&prime->zetas_pinv->c[2]));
   permwidx = _mm512_set_epi16(1,1,1,1,1,1,1,1,
                               1,1,1,1,1,1,1,1,
                               0,0,0,0,0,0,0,0,
                               0,0,0,0,0,0,0,0);
-  zeta = _mm512_permutexvar_epi16(permwidx,zeta);
-  zeta_pinv = _mm512_permutexvar_epi16(permwidx,zeta_pinv);
+  for(u=0;u<n;u++) {
+    zeta[u] = _mm512_castsi128_si512(_mm_loadl_epi64((__m128i*)&prime[u]->zetas->c[2]));
+    zeta_pinv[u] = _mm512_castsi128_si512(_mm_loadl_epi64((__m128i*)&prime[u]->zetas_pinv->c[2]));
+    zeta[u] = _mm512_permutexvar_epi16(permwidx,zeta[u]);
+    zeta_pinv[u] = _mm512_permutexvar_epi16(permwidx,zeta_pinv[u]);
+  }
   for(i=0;i<N/64;i++) {
-    t = mulmod(g[N/64+i],zeta,zeta_pinv,p);
-    g[i] = divmont(g[i],p,pinv);
+    for(u=0;u<n;u++) {
+      t = mulmod(g[u][N/64+i],zeta[u],zeta_pinv[u],p[u]);
+      g[u][i] = divmont(g[u][i],p[u],pinv[u]);
 
-    g[N/64+i] = _mm512_sub_epi16(g[i],t);
-    g[i] = _mm512_add_epi16(g[i],t);
+      g[u][N/64+i] = _mm512_sub_epi16(g[u][i],t);
+      g[u][i] = _mm512_add_epi16(g[u][i],t);
 
-    f[2*i+0] = _mm512_shuffle_i64x2(g[i],g[N/64+i],0x88);
-    f[2*i+1] = _mm512_shuffle_i64x2(g[i],g[N/64+i],0xDD);
+      f[u][2*i+0] = _mm512_shuffle_i64x2(g[u][i],g[u][N/64+i],0x88);
+      f[u][2*i+1] = _mm512_shuffle_i64x2(g[u][i],g[u][N/64+i],0xDD);
+    }
   }
 
 level2:
-  zeta = _mm512_castsi128_si512(_mm_loadl_epi64((__m128i*)&prime->zetas->c[4]));
-  zeta_pinv = _mm512_castsi128_si512(_mm_loadl_epi64((__m128i*)&prime->zetas_pinv->c[4]));
   permwidx = _mm512_set_epi16(3,3,3,3,3,3,3,3,
                               1,1,1,1,1,1,1,1,
                               2,2,2,2,2,2,2,2,
                               0,0,0,0,0,0,0,0);
-  zeta = _mm512_permutexvar_epi16(permwidx,zeta);
-  zeta_pinv = _mm512_permutexvar_epi16(permwidx,zeta_pinv);
+  for(u=0;u<n;u++) {
+    zeta[u] = _mm512_castsi128_si512(_mm_loadl_epi64((__m128i*)&prime[u]->zetas->c[4]));
+    zeta_pinv[u] = _mm512_castsi128_si512(_mm_loadl_epi64((__m128i*)&prime[u]->zetas_pinv->c[4]));
+    zeta[u] = _mm512_permutexvar_epi16(permwidx,zeta[u]);
+    zeta_pinv[u] = _mm512_permutexvar_epi16(permwidx,zeta_pinv[u]);
+  }
   for(i=0;i<N/64;i++) {
-    t = mulmod(f[N/64+i],zeta,zeta_pinv,p);
-    f[i] = divmont(f[i],p,pinv);
+    for(u=0;u<n;u++) {
+      t = mulmod(f[u][N/64+i],zeta[u],zeta_pinv[u],p[u]);
+      f[u][i] = divmont(f[u][i],p[u],pinv[u]);
 
-    f[N/64+i] = _mm512_sub_epi16(f[i],t);
-    f[i] = _mm512_add_epi16(f[i],t);
+      f[u][N/64+i] = _mm512_sub_epi16(f[u][i],t);
+      f[u][i] = _mm512_add_epi16(f[u][i],t);
 
-    g[2*i+0] = _mm512_unpacklo_epi64(f[i],f[N/64+i]);
-    g[2*i+1] = _mm512_unpackhi_epi64(f[i],f[N/64+i]);
+      g[u][2*i+0] = _mm512_unpacklo_epi64(f[u][i],f[u][N/64+i]);
+      g[u][2*i+1] = _mm512_unpackhi_epi64(f[u][i],f[u][N/64+i]);
+    }
   }
 
 level3:
-  zeta = _mm512_castsi128_si512(_mm_load_si128((__m128i*)&prime->zetas->c[8]));
-  zeta_pinv = _mm512_castsi128_si512(_mm_load_si128((__m128i*)&prime->zetas_pinv->c[8]));
   permwidx = _mm512_set_epi16(7,7,7,7,6,6,6,6,
                               3,3,3,3,2,2,2,2,
                               5,5,5,5,4,4,4,4,
                               1,1,1,1,0,0,0,0);
-  zeta = _mm512_permutexvar_epi16(permwidx,zeta);
-  zeta_pinv = _mm512_permutexvar_epi16(permwidx,zeta_pinv);
+  for(u=0;u<n;u++) {
+    zeta[u] = _mm512_castsi128_si512(_mm_load_si128((__m128i*)&prime[u]->zetas->c[8]));
+    zeta_pinv[u] = _mm512_castsi128_si512(_mm_load_si128((__m128i*)&prime[u]->zetas_pinv->c[8]));
+    zeta[u] = _mm512_permutexvar_epi16(permwidx,zeta[u]);
+    zeta_pinv[u] = _mm512_permutexvar_epi16(permwidx,zeta_pinv[u]);
+  }
   for(i=0;i<N/64;i++) {
-    t = mulmod(g[N/64+i],zeta,zeta_pinv,p);
-    g[i] = divmont(g[i],p,pinv);
+    for(u=0;u<n;u++) {
+      t = mulmod(g[u][N/64+i],zeta[u],zeta_pinv[u],p[u]);
+      g[u][i] = divmont(g[u][i],p[u],pinv[u]);
 
-    g[N/64+i] = _mm512_sub_epi16(g[i],t);
-    g[i] = _mm512_add_epi16(g[i],t);
+      g[u][N/64+i] = _mm512_sub_epi16(g[u][i],t);
+      g[u][i] = _mm512_add_epi16(g[u][i],t);
 
-    t = _mm512_moveldup_epi32(g[N/64+i]);
-    f[2*i+0] = _mm512_mask_blend_epi32(0xAAAA,g[i],t);
-    t = _mm512_srli_epi64(g[i],32);
-    f[2*i+1] = _mm512_mask_blend_epi32(0xAAAA,t,g[N/64+i]);
+      t = _mm512_moveldup_epi32(g[u][N/64+i]);
+      f[u][2*i+0] = _mm512_mask_blend_epi32(0xAAAA,g[u][i],t);
+      t = _mm512_movehdup_epi32(g[u][i]);
+      f[u][2*i+1] = _mm512_mask_blend_epi32(0xAAAA,t,g[u][N/64+i]);
+    }
   }
 
 level4:
-  zeta = _mm512_castsi256_si512(_mm256_load_si256((__m256i*)&prime->zetas->c[16]));
-  zeta_pinv = _mm512_castsi256_si512(_mm256_load_si256((__m256i*)&prime->zetas_pinv->c[16]));
   permwidx = _mm512_set_epi16(15,15,14,14,13,13,12,12,
                                7, 7, 6, 6, 5, 5, 4, 4,
                               11,11,10,10, 9, 9, 8, 8,
                                3, 3, 2, 2, 1, 1, 0, 0);
-  zeta = _mm512_permutexvar_epi16(permwidx,zeta);
-  zeta_pinv = _mm512_permutexvar_epi16(permwidx,zeta_pinv);
+  for(u=0;u<n;u++) {
+    zeta[u] = _mm512_castsi256_si512(_mm256_load_si256((__m256i*)&prime[u]->zetas->c[16]));
+    zeta_pinv[u] = _mm512_castsi256_si512(_mm256_load_si256((__m256i*)&prime[u]->zetas_pinv->c[16]));
+    zeta[u] = _mm512_permutexvar_epi16(permwidx,zeta[u]);
+    zeta_pinv[u] = _mm512_permutexvar_epi16(permwidx,zeta_pinv[u]);
+  }
   for(i=0;i<N/64;i++) {
-    t = mulmod(f[N/64+i],zeta,zeta_pinv,p);
-    f[i] = divmont(f[i],p,pinv);
+    for(u=0;u<n;u++) {
+      t = mulmod(f[u][N/64+i],zeta[u],zeta_pinv[u],p[u]);
+      f[u][i] = divmont(f[u][i],p[u],pinv[u]);
 
-    f[N/64+i] = _mm512_sub_epi16(f[i],t);
-    f[i] = _mm512_add_epi16(f[i],t);
+      f[u][N/64+i] = _mm512_sub_epi16(f[u][i],t);
+      f[u][i] = _mm512_add_epi16(f[u][i],t);
 
-    t = _mm512_slli_epi32(f[N/64+i],16);
-    g[2*i+0] = _mm512_mask_blend_epi16(0xAAAAAAAA,f[i],t);
-    t = _mm512_srli_epi32(f[i],16);
-    g[2*i+1] = _mm512_mask_blend_epi16(0xAAAAAAAA,t,f[N/64+i]);
+      t = _mm512_shuffle_epi8(f[u][N/64+i],dupw0);
+      g[u][2*i+0] = _mm512_mask_blend_epi16(0xAAAAAAAA,f[u][i],t);
+      t = _mm512_shuffle_epi8(f[u][i],dupw1);
+      g[u][2*i+1] = _mm512_mask_blend_epi16(0xAAAAAAAA,t,f[u][N/64+i]);
+    }
   }
 
 level5:
-  zeta = _mm512_load_si512((__m512i*)&prime->zetas->c[32]);
-  zeta_pinv = _mm512_load_si512((__m512i*)&prime->zetas_pinv->c[32]);
-  zeta = _mm512_shuffle_i64x2(zeta,zeta,0xD8);
-  zeta_pinv = _mm512_shuffle_i64x2(zeta_pinv,zeta_pinv,0xD8);
+  for(u=0;u<n;u++) {
+    zeta[u] = _mm512_load_si512((__m512i*)&prime[u]->zetas->c[32]);
+    zeta_pinv[u] = _mm512_load_si512((__m512i*)&prime[u]->zetas_pinv->c[32]);
+    zeta[u] = _mm512_shuffle_i64x2(zeta[u],zeta[u],0xD8);
+    zeta_pinv[u] = _mm512_shuffle_i64x2(zeta_pinv[u],zeta_pinv[u],0xD8);
+  }
   for(i=0;i<N/64;i++) {
-    t = mulmod(g[N/64+i],zeta,zeta_pinv,p);
-    g[i] = divmont(g[i],p,pinv);
+    for(u=0;u<n;u++) {
+      t = mulmod(g[u][N/64+i],zeta[u],zeta_pinv[u],p[u]);
+      g[u][i] = divmont(g[u][i],p[u],pinv[u]);
 
-    g[N/64+i] = _mm512_sub_epi16(g[i],t);
-    g[i] = _mm512_add_epi16(g[i],t);
+      g[u][N/64+i] = _mm512_sub_epi16(g[u][i],t);
+      g[u][i] = _mm512_add_epi16(g[u][i],t);
+    }
   }
 
 #if N >= 128
 level6:
-  zeta = _mm512_load_si512((__m512i*)&prime->zetas->c[64]);
-  zeta_pinv = _mm512_load_si512((__m512i*)&prime->zetas_pinv->c[64]);
-  for(i=0;i<N/128;i++) {
-    t = mulmod(g[N/128+i],zeta,zeta_pinv,p);
-    g[i] = divmont(g[i],p,pinv);
-
-    g[N/128+i] = _mm512_sub_epi16(g[i],t);
-    g[i] = _mm512_add_epi16(g[i],t);
+  for(u=0;u<n;u++) {
+    zeta[u] = _mm512_load_si512((__m512i*)&prime[u]->zetas->c[64]);
+    zeta_pinv[u] = _mm512_load_si512((__m512i*)&prime[u]->zetas_pinv->c[64]);
   }
-  zeta = _mm512_load_si512((__m512i*)&prime->zetas->c[96]);
-  zeta_pinv = _mm512_load_si512((__m512i*)&prime->zetas_pinv->c[96]);
   for(i=0;i<N/128;i++) {
-    t = mulmod(g[N/64+N/128+i],zeta,zeta_pinv,p);
-    g[N/64+i] = divmont(g[N/64+i],p,pinv);
+    for(u=0;u<n;u++) {
+      t = mulmod(g[u][N/128+i],zeta[u],zeta_pinv[u],p[u]);
+      g[u][i] = divmont(g[u][i],p[u],pinv[u]);
 
-    g[N/64+N/128+i] = _mm512_sub_epi16(g[N/64+i],t);
-    g[N/64+i] = _mm512_add_epi16(g[N/64+i],t);
+      g[u][N/128+i] = _mm512_sub_epi16(g[u][i],t);
+      g[u][i] = _mm512_add_epi16(g[u][i],t);
+    }
+  }
+  for(u=0;u<n;u++) {
+    zeta[u] = _mm512_load_si512((__m512i*)&prime[u]->zetas->c[96]);
+    zeta_pinv[u] = _mm512_load_si512((__m512i*)&prime[u]->zetas_pinv->c[96]);
+  }
+  for(i=0;i<N/128;i++) {
+    for(u=0;u<n;u++) {
+      t = mulmod(g[u][N/64+N/128+i],zeta[u],zeta_pinv[u],p[u]);
+      g[u][N/64+i] = divmont(g[u][N/64+i],p[u],pinv[u]);
+
+      g[u][N/64+N/128+i] = _mm512_sub_epi16(g[u][N/64+i],t);
+      g[u][N/64+i] = _mm512_add_epi16(g[u][N/64+i],t);
+    }
   }
 #endif
 
 #if N >= 256
 level7:
   for(i=0;i<4;i++) {
-    zeta = _mm512_load_si512((__m512i*)&prime->zetas->c[128+32*i]);
-    zeta_pinv = _mm512_load_si512((__m512i*)&prime->zetas_pinv->c[128+32*i]);
-    g[2*i+0] = divmont(g[2*i+0],p,pinv);
-    t = mulmod(g[2*i+1],zeta,zeta_pinv,p);
-    g[2*i+1] = _mm512_sub_epi16(g[2*i+0],t);
-    g[2*i+0] = _mm512_add_epi16(g[2*i+0],t);
+    for(u=0;u<n;u++) {
+      zeta[u] = _mm512_load_si512((__m512i*)&prime[u]->zetas->c[128+32*i]);
+      zeta_pinv[u] = _mm512_load_si512((__m512i*)&prime[u]->zetas_pinv->c[128+32*i]);
+      g[u][2*i+0] = divmont(g[u][2*i+0],p[u],pinv[u]);
+      t = mulmod(g[u][2*i+1],zeta[u],zeta_pinv[u],p[u]);
+      g[u][2*i+1] = _mm512_sub_epi16(g[u][2*i+0],t);
+      g[u][2*i+0] = _mm512_add_epi16(g[u][2*i+0],t);
+    }
   }
 #endif
 
 scale:
-  zeta = _mm512_set1_epi16(prime->f);
-  zeta_pinv = _mm512_set1_epi16(prime->f_pinv);
-  for(i=0;i<N/32;i++) {
-    g[i] = mulmod(g[i],zeta,zeta_pinv,p);
-    _mm512_store_si512(&r->v[i],g[i]);
+  for(u=0;u<n;u++) {
+    zeta[u] = _mm512_set1_epi16(prime[u]->f);
+    zeta_pinv[u] = _mm512_set1_epi16(prime[u]->f_pinv);
   }
+  for(i=0;i<N/32;i++) {
+    for(u=0;u<n;u++) {
+      g[u][i] = mulmod(g[u][i],zeta[u],zeta_pinv[u],p[u]);
+      _mm512_store_si512(&r[u]->v[i],g[u][i]);
+    }
+  }
+}
+
+void poly_ntt(poly r, const poly a, const pdata prime) {
+  const int16_t s = 0;
+
+  ntt(&r,&a,1,0,&s,&prime);
+}
+
+void poly_ntt_scale(poly r, const poly a, int16_t s, const pdata prime) {
+  ntt(&r,&a,1,1,&s,&prime);
+}
+
+void poly_ntt2(poly r0, poly r1, const poly a0, const poly a1, const pdata prime0, const pdata prime1) {
+  const int16_t s[2] = {0,0};
+  union vecn *const r[2] = {r0,r1};
+  const union vecn *const a[2] = {a0,a1};
+  const pdata_ptr pr[2] = {prime0,prime1};
+
+  ntt(r,a,2,0,s,pr);
+}
+
+void poly_ntt_scale2(poly r0, poly r1, const poly a0, const poly a1, int16_t s0, int16_t s1, const pdata prime0, const pdata prime1) {
+  const int16_t s[2] = {s0,s1};
+  union vecn *const r[2] = {r0,r1};
+  const union vecn *const a[2] = {a0,a1};
+  const pdata_ptr pr[2] = {prime0,prime1};
+
+  ntt(r,a,2,1,s,pr);
 }
 
 void poly_invntt(poly r, const poly a, const pdata prime) {
@@ -368,6 +453,337 @@ level0:
 store:
   for(i=0;i<N/32;i++)
     _mm512_store_si512(&r->v[i],g[i]);
+}
+
+#if N == 256
+struct invcrt {
+  __m512i z7[4],z7p[4];
+  __m512i z[7],zs[7];
+  int16_t k[4];
+  int ready,ok;
+};
+
+static struct invcrt invcrt[K];
+
+static int64_t powmod(int64_t a, int64_t e, int64_t p) {
+  int64_t r = 1;
+
+  a %= p;
+  if(a < 0) a += p;
+  while(e) {
+    if(e&1) r = r*a%p;
+    a = a*a%p;
+    e >>= 1;
+  }
+  return r;
+}
+
+static __attribute__((noinline)) const struct invcrt *invcrt_setup(size_t i) {
+  size_t j,l;
+  int64_t p,v,ri;
+  union vecn w;
+  __m512i z[7];
+  __m512i permwidx;
+  struct invcrt *c = &invcrt[i];
+
+  if(c->ready)
+    return c;
+  p = primes[i]->p;
+  c->ok = 4*p <= 65536;
+  for(l=0;l<N;l++)
+    c->ok &= 2*abs(primes[i]->zetas->c[l]) <= p;
+  c->ready = 1;
+  if(!c->ok)
+    return c;
+
+  permwidx = _mm512_set_epi16( 0, 1, 2, 3, 4, 5, 6, 7,
+                               8, 9,10,11,12,13,14,15,
+                              16,17,18,19,20,21,22,23,
+                              24,25,26,27,28,29,30,31);
+  for(j=0;j<4;j++) {
+    c->z7[j] = _mm512_permutexvar_epi16(permwidx,_mm512_load_si512((__m512i*)&primes[i]->zetas->c[224-32*j]));
+    c->z7p[j] = _mm512_permutexvar_epi16(permwidx,_mm512_load_si512((__m512i*)&primes[i]->zetas_pinv->c[224-32*j]));
+  }
+  z[0] = _mm512_permutexvar_epi16(permwidx,_mm512_load_si512((__m512i*)&primes[i]->zetas->c[96]));
+  z[1] = _mm512_permutexvar_epi16(permwidx,_mm512_load_si512((__m512i*)&primes[i]->zetas->c[64]));
+  permwidx = _mm512_shuffle_i64x2(permwidx,permwidx,0xD8);
+  z[2] = _mm512_permutexvar_epi16(permwidx,_mm512_load_si512((__m512i*)&primes[i]->zetas->c[32]));
+  permwidx = _mm512_set_epi16( 0, 0, 1, 1, 2, 2, 3, 3,
+                               8, 8, 9, 9,10,10,11,11,
+                               4, 4, 5, 5, 6, 6, 7, 7,
+                              12,12,13,13,14,14,15,15);
+  z[3] = _mm512_permutexvar_epi16(permwidx,_mm512_castsi256_si512(_mm256_load_si256((__m256i*)&primes[i]->zetas->c[16])));
+  permwidx = _mm512_set_epi16(0,0,0,0,1,1,1,1,
+                              4,4,4,4,5,5,5,5,
+                              2,2,2,2,3,3,3,3,
+                              6,6,6,6,7,7,7,7);
+  z[4] = _mm512_permutexvar_epi16(permwidx,_mm512_castsi128_si512(_mm_load_si128((__m128i*)&primes[i]->zetas->c[8])));
+  permwidx = _mm512_set_epi16(0,0,0,0,0,0,0,0,
+                              2,2,2,2,2,2,2,2,
+                              1,1,1,1,1,1,1,1,
+                              3,3,3,3,3,3,3,3);
+  z[5] = _mm512_permutexvar_epi16(permwidx,_mm512_castsi128_si512(_mm_loadl_epi64((__m128i*)&primes[i]->zetas->c[4])));
+  permwidx = _mm512_set_epi16(0,0,0,0,0,0,0,0,
+                              0,0,0,0,0,0,0,0,
+                              1,1,1,1,1,1,1,1,
+                              1,1,1,1,1,1,1,1);
+  z[6] = _mm512_permutexvar_epi16(permwidx,_mm512_castsi128_si512(_mm_loadl_epi64((__m128i*)&primes[i]->zetas->c[2])));
+  for(j=0;j<7;j++) {
+    w.v[0] = z[j];
+    for(l=0;l<32;l++) {
+      v = w.c[l] % p;
+      v += (v < 0) ? p : 0;
+      w.c[l] = v;
+    }
+    c->z[j] = w.v[0];
+    for(l=0;l<32;l++)
+      w.c[l] = (uint16_t)((w.c[l] << 16)/p);
+    c->zs[j] = w.v[0];
+  }
+  ri = powmod(powmod(1 << 16,p-2,p),8,p);
+  v = primes[i]->t*ri%p;
+  v += (v < 0) ? p : 0;
+  c->k[0] = v;
+  c->k[1] = (uint16_t)((v << 16)/p);
+  v = v*primes[i]->zetas->c[1]%p;
+  v += (v < 0) ? p : 0;
+  c->k[2] = v;
+  c->k[3] = (uint16_t)((v << 16)/p);
+  return c;
+}
+
+static inline __m512i shoup(const __m512i a, const __m512i z, const __m512i zs, const __m512i p) {
+  __m512i q;
+
+  q = _mm512_mulhi_epu16(a,zs);
+  q = _mm512_mullo_epi16(q,p);
+  return _mm512_sub_epi16(_mm512_mullo_epi16(a,z),q);
+}
+
+static inline __attribute__((always_inline))
+void invntt_crt(union vecn *const *r, const union vecn *const *a, size_t n, const size_t *idx) {
+  size_t i,u;
+  __m512i t,d;
+  __m512i f[2][N/32],g[2][N/32];
+  __m512i p[2],p2[2],pinv[2];
+  __m512i z[2],zs[2];
+  const struct invcrt *c[2];
+  const __m512i dupw0 = _mm512_set_epi64(0x0D0C0D0C09080908,0x0504050401000100,0x0D0C0D0C09080908,0x0504050401000100,
+                                         0x0D0C0D0C09080908,0x0504050401000100,0x0D0C0D0C09080908,0x0504050401000100);
+  const __m512i dupw1 = _mm512_set_epi64(0x0F0E0F0E0B0A0B0A,0x0706070603020302,0x0F0E0F0E0B0A0B0A,0x0706070603020302,
+                                         0x0F0E0F0E0B0A0B0A,0x0706070603020302,0x0F0E0F0E0B0A0B0A,0x0706070603020302);
+
+  for(u=0;u<n;u++) {
+    c[u] = &invcrt[idx[u]];
+    p[u] = _mm512_set1_epi16(primes[idx[u]]->p);
+    p2[u] = _mm512_add_epi16(p[u],p[u]);
+    pinv[u] = _mm512_set1_epi16(primes[idx[u]]->pinv);
+  }
+
+  #pragma GCC unroll 8
+
+  for(i=0;i<N/32;i++)
+    for(u=0;u<n;u++)
+      f[u][i] = _mm512_load_si512(&a[u]->v[i]);
+
+  #pragma GCC unroll 8
+
+  for(i=0;i<4;i++) {
+    for(u=0;u<n;u++) {
+      t = _mm512_add_epi16(f[u][2*i+0],f[u][2*i+1]);
+      f[u][2*i+1] = _mm512_sub_epi16(f[u][2*i+1],f[u][2*i+0]);
+      f[u][2*i+0] = divmont(t,p[u],pinv[u]);
+      f[u][2*i+1] = mulmod(f[u][2*i+1],c[u]->z7[i],c[u]->z7p[i],p[u]);
+    }
+  }
+
+  for(u=0;u<n;u++) {
+    z[u] = c[u]->z[0];
+    zs[u] = c[u]->zs[0];
+  }
+  #pragma GCC unroll 8
+  for(i=0;i<N/128;i++) {
+    for(u=0;u<n;u++) {
+      t = _mm512_add_epi16(f[u][i],f[u][N/128+i]);
+      d = _mm512_sub_epi16(f[u][N/128+i],f[u][i]);
+      f[u][i] = _mm512_min_epu16(t,_mm512_add_epi16(t,p2[u]));
+      d = _mm512_add_epi16(d,p2[u]);
+      f[u][N/128+i] = shoup(d,z[u],zs[u],p[u]);
+    }
+  }
+  for(u=0;u<n;u++) {
+    z[u] = c[u]->z[1];
+    zs[u] = c[u]->zs[1];
+  }
+  #pragma GCC unroll 8
+  for(i=N/64;i<N/64+N/128;i++) {
+    for(u=0;u<n;u++) {
+      t = _mm512_add_epi16(f[u][i],f[u][N/128+i]);
+      d = _mm512_sub_epi16(f[u][N/128+i],f[u][i]);
+      f[u][i] = _mm512_min_epu16(t,_mm512_add_epi16(t,p2[u]));
+      d = _mm512_add_epi16(d,p2[u]);
+      f[u][N/128+i] = shoup(d,z[u],zs[u],p[u]);
+    }
+  }
+
+  for(u=0;u<n;u++) {
+    z[u] = c[u]->z[2];
+    zs[u] = c[u]->zs[2];
+  }
+  #pragma GCC unroll 8
+  for(i=0;i<N/64;i++) {
+    for(u=0;u<n;u++) {
+      t = _mm512_add_epi16(f[u][i],f[u][N/64+i]);
+      d = _mm512_sub_epi16(f[u][N/64+i],f[u][i]);
+      f[u][i] = _mm512_min_epu16(t,_mm512_sub_epi16(t,p2[u]));
+      d = _mm512_add_epi16(d,p2[u]);
+      f[u][N/64+i] = shoup(d,z[u],zs[u],p[u]);
+    }
+  }
+
+  for(u=0;u<n;u++) {
+    z[u] = c[u]->z[3];
+    zs[u] = c[u]->zs[3];
+  }
+  #pragma GCC unroll 8
+  for(i=0;i<N/64;i++) {
+    for(u=0;u<n;u++) {
+      t = _mm512_shuffle_epi8(f[u][2*i+1],dupw0);
+      g[u][i] = _mm512_mask_blend_epi16(0xAAAAAAAA,f[u][2*i+0],t);
+      t = _mm512_shuffle_epi8(f[u][2*i+0],dupw1);
+      g[u][N/64+i] = _mm512_mask_blend_epi16(0xAAAAAAAA,t,f[u][2*i+1]);
+
+      t = _mm512_add_epi16(g[u][i],g[u][N/64+i]);
+      d = _mm512_sub_epi16(g[u][N/64+i],g[u][i]);
+      g[u][i] = _mm512_min_epu16(t,_mm512_sub_epi16(t,p2[u]));
+      d = _mm512_add_epi16(d,p2[u]);
+      g[u][N/64+i] = shoup(d,z[u],zs[u],p[u]);
+    }
+  }
+
+  for(u=0;u<n;u++) {
+    z[u] = c[u]->z[4];
+    zs[u] = c[u]->zs[4];
+  }
+  #pragma GCC unroll 8
+  for(i=0;i<N/64;i++) {
+    for(u=0;u<n;u++) {
+      t = _mm512_moveldup_epi32(g[u][2*i+1]);
+      f[u][i] = _mm512_mask_blend_epi32(0xAAAA,g[u][2*i+0],t);
+      t = _mm512_movehdup_epi32(g[u][2*i+0]);
+      f[u][N/64+i] = _mm512_mask_blend_epi32(0xAAAA,t,g[u][2*i+1]);
+
+      t = _mm512_add_epi16(f[u][i],f[u][N/64+i]);
+      d = _mm512_sub_epi16(f[u][N/64+i],f[u][i]);
+      f[u][i] = _mm512_min_epu16(t,_mm512_sub_epi16(t,p2[u]));
+      d = _mm512_add_epi16(d,p2[u]);
+      f[u][N/64+i] = shoup(d,z[u],zs[u],p[u]);
+    }
+  }
+
+  for(u=0;u<n;u++) {
+    z[u] = c[u]->z[5];
+    zs[u] = c[u]->zs[5];
+  }
+  #pragma GCC unroll 8
+  for(i=0;i<N/64;i++) {
+    for(u=0;u<n;u++) {
+      g[u][i] = _mm512_unpacklo_epi64(f[u][2*i+0],f[u][2*i+1]);
+      g[u][N/64+i] = _mm512_unpackhi_epi64(f[u][2*i+0],f[u][2*i+1]);
+
+      t = _mm512_add_epi16(g[u][i],g[u][N/64+i]);
+      d = _mm512_sub_epi16(g[u][N/64+i],g[u][i]);
+      g[u][i] = _mm512_min_epu16(t,_mm512_sub_epi16(t,p2[u]));
+      d = _mm512_add_epi16(d,p2[u]);
+      g[u][N/64+i] = shoup(d,z[u],zs[u],p[u]);
+    }
+  }
+
+  for(u=0;u<n;u++) {
+    z[u] = c[u]->z[6];
+    zs[u] = c[u]->zs[6];
+  }
+  #pragma GCC unroll 8
+  for(i=0;i<N/64;i++) {
+    for(u=0;u<n;u++) {
+      f[u][i] = _mm512_shuffle_i64x2(g[u][2*i+0],g[u][2*i+1],0x44);
+      f[u][N/64+i] = _mm512_shuffle_i64x2(g[u][2*i+0],g[u][2*i+1],0xEE);
+      f[u][i] = _mm512_shuffle_i64x2(f[u][i],f[u][i],0xD8);
+      f[u][N/64+i] = _mm512_shuffle_i64x2(f[u][N/64+i],f[u][N/64+i],0xD8);
+
+      t = _mm512_add_epi16(f[u][i],f[u][N/64+i]);
+      d = _mm512_sub_epi16(f[u][N/64+i],f[u][i]);
+      f[u][i] = _mm512_min_epu16(t,_mm512_sub_epi16(t,p2[u]));
+      d = _mm512_add_epi16(d,p2[u]);
+      f[u][N/64+i] = shoup(d,z[u],zs[u],p[u]);
+    }
+  }
+
+  #pragma GCC unroll 8
+
+  for(i=0;i<N/64;i++) {
+    for(u=0;u<n;u++) {
+      g[u][i] = _mm512_shuffle_i64x2(f[u][2*i+0],f[u][2*i+1],0x44);
+      g[u][N/64+i] = _mm512_shuffle_i64x2(f[u][2*i+0],f[u][2*i+1],0xEE);
+
+      t = _mm512_add_epi16(g[u][i],g[u][N/64+i]);
+      d = _mm512_sub_epi16(g[u][N/64+i],g[u][i]);
+      d = _mm512_add_epi16(d,p2[u]);
+      g[u][i] = shoup(t,_mm512_set1_epi16(c[u]->k[0]),_mm512_set1_epi16(c[u]->k[1]),p[u]);
+      g[u][N/64+i] = shoup(d,_mm512_set1_epi16(c[u]->k[2]),_mm512_set1_epi16(c[u]->k[3]),p[u]);
+    }
+  }
+
+  #pragma GCC unroll 8
+
+  for(i=0;i<N/32;i++)
+    for(u=0;u<n;u++)
+      _mm512_store_si512(&r[u]->v[i],g[u][i]);
+}
+
+#endif
+
+static void invntt_crt_fallback(poly r, const poly a, size_t i) {
+  poly_invntt(r,a,primes[i]);
+  poly_scale(r,r,primes[i]->t,primes[i]);
+  poly_caddp(r,primes[i]);
+}
+
+void poly_invntt_crt(poly r, const poly a, size_t i) {
+#if N == 256
+  if(!invcrt[i].ready)
+    invcrt_setup(i);
+  if(invcrt[i].ok) {
+    invntt_crt(&r,&a,1,&i);
+    return;
+  }
+#endif
+  invntt_crt_fallback(r,a,i);
+}
+
+void poly_invntt_crt2(poly r0, poly r1, const poly a0, const poly a1, size_t i0, size_t i1) {
+  size_t i;
+  poly t[2];
+#if N == 256
+  union vecn *const r[2] = {r0,r1};
+  const union vecn *const a[2] = {a0,a1};
+  const size_t idx[2] = {i0,i1};
+
+  if(!invcrt[i0].ready)
+    invcrt_setup(i0);
+  if(!invcrt[i1].ready)
+    invcrt_setup(i1);
+  if(invcrt[i0].ok && invcrt[i1].ok) {
+    invntt_crt(r,a,2,idx);
+    return;
+  }
+#endif
+  invntt_crt_fallback(t[0],a0,i0);
+  invntt_crt_fallback(t[1],a1,i1);
+  for(i=0;i<N/32;i++) {
+    _mm512_store_si512(&r0->v[i],t[0]->v[i]);
+    _mm512_store_si512(&r1->v[i],t[1]->v[i]);
+  }
 }
 
 void poly_nttunpack(poly r, const pdata prime) {
