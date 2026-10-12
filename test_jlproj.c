@@ -15,7 +15,7 @@ int main(void) {
   unsigned long long t[21], overhead;
   alignas(16) uint8_t seed[16];
   uint64_t nonce = 0;
-  alignas(64) uint8_t mat[256*N/8];
+  alignas(64) uint8_t mat[2*256*N/8];
   alignas(64) uint8_t buf[256*QBYTES];
   alignas(64) int32_t p[256];
   alignas(64) int64_t alpha[256];
@@ -37,13 +37,14 @@ int main(void) {
 
   jlproj_expand_challenge(alpha,buf);
   polxvec_init(r,1,1);
-  polxvec_jlproj_collapsmat(r,mat,alpha);
+  polxvec_jlproj_collapsmat(&r,1,mat,&mat[256*N/8],alpha);
   polx_frompolxvec(r1,r,0);
   polx_poly_mul(r1,r1,s,(1<<28)/12.0);
   polx_getcoeff(x,r1,0);
   if(!zz_less_than(x,modulus->q))
     zz_sub(x,x,modulus->q);
 
+  poly_jlproj_add(p,s,&mat[256*N/8]);
   c = jlproj_collapsproj(p,alpha);
   zz_fromint64(y,c);
   if(!zz_less_than(y,modulus->q))
@@ -67,7 +68,7 @@ int main(void) {
   for(i=0;i<21;i++) {
     t[i] = cpucycles();
     jlproj_expand_challenge(alpha,buf);
-    polxvec_jlproj_collapsmat(r,mat,alpha);
+    polxvec_jlproj_collapsmat(&r,1,mat,&mat[256*N/8],alpha);
   }
   for(i=0;i<20;i++)
     printf("jlproj_collapsmat:  %2lu: %8lld\n", i, t[i+1] - t[i] - overhead);

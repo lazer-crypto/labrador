@@ -30,19 +30,21 @@ static void ldd_collapse_jl(
   __attribute__((aligned(64)))
   uint8_t hashbufjl[64 + QBYTES*256 + 24];
   __attribute__((aligned(64)))
-  int64_t chalz_jlmat[256];
+  int64_t chalz_jlmat[LIFTS][256];
 
   for(i=0;i<LIFTS;i++){
     shake128(hashbufjl, sizeof(hashbufjl), h, 16);
     memcpy(h, hashbufjl, 16);
-    jlproj_expand_challenge(chalz_jlmat, &hashbufjl[64]);
+    jlproj_expand_challenge(chalz_jlmat[i], &hashbufjl[64]);
 
     polxvec_init(jlmat_agg[i], nmax, 1);
     polxvec_init(phi_jlproj[i], jlbits_max * 256/N, 1);
+  }
 
-    jl_aggregate_mat(jlmat_agg[i], jlmat1, jlmat2, chalz_jlmat);
-    polxvec_refresh(jlmat_agg[i]);
-    jl_aggregate_proj(phi_jlproj[i], jlbits_max, chalz_jlmat);
+  jl_aggregate_mat(jlmat_agg, LIFTS, jlmat1, jlmat2, chalz_jlmat[0]);
+
+  for(i=0;i<LIFTS;i++){
+    jl_aggregate_proj(phi_jlproj[i], jlbits_max, chalz_jlmat[i]);
   }
 }
 
