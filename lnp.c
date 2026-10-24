@@ -593,6 +593,7 @@ rej_loop1:
 #if !NOREJ
         if (reject) {// accept with prob. > 0.9999
             // printf("rejected v1[%lu]: too many carries\n", i);
+            free(jlmat1);
             goto rej_loop1;
         }
 #endif
