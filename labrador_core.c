@@ -143,6 +143,7 @@ static int lab_params_gen_raw(
   }
   else{
     pp->fz = 1;
+    pp->normsq_new[1] = 0;
     pp->bz = round((log2(12)+log2(var_z))/2);
 
     pp->normsq_new[0] = tail_factor(pp->nmax * N) * pp->normsq_global * PS_TAU * PS_TAU;
