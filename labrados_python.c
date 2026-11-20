@@ -195,7 +195,7 @@ int py_append_quadratic(
   size_t i, j, k;
   sparsecnst *cnst;
   __attribute__((aligned(16)))
-  uint8_t hashbuf[N*QBYTES];
+  uint8_t hashbuf[POLZBYTES];
   polz t;
   int64_t quadcoeffs[N] = {};
   shake128incctx shakectx;
@@ -251,7 +251,7 @@ int py_append_quadratic(
     quadcoeffs[0] = a[i];
     polzvec_fromint64vec(&t, 1, 1, quadcoeffs);
     polzvec_bitpack(hashbuf, &t, 1);
-    shake128_inc_absorb(&shakectx, hashbuf, N*QBYTES);
+    shake128_inc_absorb(&shakectx, hashbuf, POLZBYTES);
   }
 
   shake128_inc_finalize(&shakectx);
